@@ -1,5 +1,6 @@
 "use client"
 import { WrappedSlides } from "@/components/wrapped-slides"
+import { UploadScreen } from "@/components/upload-screen"
 import { useEffect, useState } from "react"
 
 interface DiscordData {
@@ -52,32 +53,40 @@ interface DiscordData {
 
 export default function DiscordWrapped() {
   const [data, setData] = useState<DiscordData | null>(null)
+  const [mode, setMode] = useState<'checking' | 'upload' | 'loading' | 'ready' | 'error'>('checking')
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
 
+  // Check if server has pre-loaded data (for local development)
   useEffect(() => {
-    async function loadData() {
+    async function checkServerData() {
       try {
         const response = await fetch('/api/wrapped')
         const result = await response.json()
         
-        if (result.success) {
+        if (result.success && result.data) {
           setData(result.data)
+          setMode('ready')
         } else {
-          setError(result.error)
+          // No server data, show upload screen
+          setMode('upload')
         }
-      } catch (err: any) {
-        console.error("[v0] Failed to load Discord data:", err)
-        setError(err.message)
-      } finally {
-        setLoading(false)
+      } catch (err) {
+        // API not available or failed, show upload screen
+        setMode('upload')
       }
     }
 
-    loadData()
+    checkServerData()
   }, [])
 
-  if (loading) {
+  // Handle data from client-side upload
+  const handleDataReady = (stats: DiscordData) => {
+    setData(stats)
+    setMode('ready')
+  }
+
+  // Checking for server data
+  if (mode === 'checking') {
     return (
       <div className="relative min-h-screen overflow-hidden bg-black">
         <div className="absolute inset-0 bg-gradient-to-br from-black via-red-950/20 to-black" />
@@ -90,35 +99,40 @@ export default function DiscordWrapped() {
             <div className="relative">
               <div className="animate-spin rounded-full h-20 w-20 border-4 border-red-900 border-t-red-500 mx-auto"></div>
             </div>
-            <h1 className="text-4xl font-black text-white">Loading your 2025 Wrapped...</h1>
-            <p className="text-gray-400">Crunching the numbers</p>
-            <div className="flex justify-center gap-1">
-              <span className="w-2 h-2 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-              <span className="w-2 h-2 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-              <span className="w-2 h-2 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-            </div>
+            <h1 className="text-4xl font-black text-white">Discord Wrapped</h1>
+            <p className="text-gray-400">Loading...</p>
           </div>
         </div>
       </div>
     )
   }
 
-  if (error || !data) {
-    return (
-      <div className="relative min-h-screen overflow-hidden bg-black">
-        <div className="absolute inset-0 bg-gradient-to-br from-black via-red-950/20 to-black" />
-        <div className="relative z-10 flex min-h-screen items-center justify-center p-4">
-          <div className="text-center space-y-4 max-w-2xl">
-            <h1 className="text-5xl font-black text-white">Unable to load Discord data</h1>
-            <p className="text-xl text-gray-400">
-              Make sure your Discord data is in the <code className="text-red-500">Messages/</code> directory
-            </p>
-            <p className="text-sm text-gray-500">Error: {error || "Unknown error"}</p>
-          </div>
-        </div>
-      </div>
-    )
+  // Show upload screen for client-side processing
+  if (mode === 'upload') {
+    return <UploadScreen onDataReady={handleDataReady} />
   }
 
-  return <WrappedSlides data={data} />
+  // Show wrapped slides when data is ready
+  if (mode === 'ready' && data) {
+    return <WrappedSlides data={data} />
+  }
+
+  // Error state
+  return (
+    <div className="relative min-h-screen overflow-hidden bg-black">
+      <div className="absolute inset-0 bg-gradient-to-br from-black via-red-950/20 to-black" />
+      <div className="relative z-10 flex min-h-screen items-center justify-center p-4">
+        <div className="text-center space-y-4 max-w-2xl">
+          <h1 className="text-5xl font-black text-white">Something went wrong</h1>
+          <p className="text-xl text-gray-400">{error || "Unknown error"}</p>
+          <button 
+            onClick={() => setMode('upload')}
+            className="px-6 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-semibold"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }

@@ -29,6 +29,12 @@ const nextConfig = {
       type: 'asset/source',
     })
     
+    // Handle WASM files for DuckDB-WASM
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+    }
+    
     // Ignore specific problematic files
     config.resolve = config.resolve || {}
     config.resolve.alias = {
