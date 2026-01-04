@@ -110,17 +110,31 @@ export async function calculateStats(
   
   onProgress('Loading messages into database...', 85)
   
-  // Filter to 2025 only
-  const messages2025 = messages.filter(m => {
-    const ts = m.Timestamp
-    return ts && ts >= '2025-01-01' && ts < '2026-01-01'
+  // Try to find the most recent year with data
+  const years = new Set<number>()
+  messages.forEach(m => {
+    if (m.Timestamp) {
+      const year = new Date(m.Timestamp).getFullYear()
+      if (year >= 2020 && year <= 2030) years.add(year)
+    }
   })
   
-  if (messages2025.length === 0) {
-    throw new Error('No messages found for 2025. Make sure your Discord data includes 2025 activity.')
+  const availableYears = Array.from(years).sort((a, b) => b - a)
+  const targetYear = availableYears[0] || 2025
+  
+  // Filter to target year
+  const messagesFiltered = messages.filter(m => {
+    const ts = m.Timestamp
+    if (!ts) return false
+    const year = new Date(ts).getFullYear()
+    return year === targetYear
+  })
+  
+  if (messagesFiltered.length === 0) {
+    throw new Error(`No messages found in your Discord data. Available years: ${availableYears.join(', ') || 'none'}`)
   }
   
-  onProgress(`Analyzing ${messages2025.length.toLocaleString()} messages from 2025...`, 88)
+  onProgress(`Analyzing ${messagesFiltered.length.toLocaleString()} messages from ${targetYear}...`, 88)
   
   // Create table and insert data
   await conn.query(`DROP TABLE IF EXISTS messages`)
@@ -136,8 +150,8 @@ export async function calculateStats(
   
   // Insert in batches
   const batchSize = 5000
-  for (let i = 0; i < messages2025.length; i += batchSize) {
-    const batch = messages2025.slice(i, i + batchSize)
+  for (let i = 0; i < messagesFiltered.length; i += batchSize) {
+    const batch = messagesFiltered.slice(i, i + batchSize)
     const values = batch.map(m => {
       const contents = (m.Contents || '').replace(/'/g, "''")
       const attachments = (m.Attachments || '').replace(/'/g, "''")
@@ -150,14 +164,17 @@ export async function calculateStats(
       await conn.query(`INSERT INTO messages VALUES ${values}`)
     }
     
-    const percent = 88 + Math.round((i / messages2025.length) * 5)
-    onProgress(`Loading data... (${Math.min(i + batchSize, messages2025.length).toLocaleString()}/${messages2025.length.toLocaleString()})`, percent)
+    const percent = 88 + Math.round((i / messagesFiltered.length) * 5)
+    onProgress(`Loading data... (${Math.min(i + batchSize, messagesFiltered.length).toLocaleString()}/${messagesFiltered.length.toLocaleString()})`, percent)
   }
   
   onProgress('Calculating statistics...', 94)
   
   // Now run all the stats queries
   const stats = await runStatsQueries(conn, onProgress)
+  
+  // Add the year to stats
+  stats.year = targetYear
   
   onProgress('Done!', 100)
   
@@ -410,6 +427,7 @@ async function runStatsQueries(conn: duckdb.AsyncDuckDBConnection, onProgress: (
   const daysActive = getVal(dateStats, 'days_active', 0)
 
   return {
+    year: 0, // Will be set by caller
     totalMessages: getVal(totalMessages, 'count'),
     totalWords: getVal(textStats, 'total_words'),
     totalCharacters: getVal(textStats, 'total_chars'),

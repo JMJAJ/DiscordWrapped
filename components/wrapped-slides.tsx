@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 
 interface DiscordData {
+  year?: number
   totalMessages: number
   totalWords: number
   totalCharacters: number
@@ -74,6 +75,7 @@ function compactNumber(num: number): string {
 
 function createSlides(data: DiscordData) {
   const slides: any[] = []
+  const year = data.year || 2025
 
   const { 
     MessageSquare, Calendar, Clock, Zap, 
@@ -87,7 +89,7 @@ function createSlides(data: DiscordData) {
     id: "intro",
     type: "intro",
     title: "Your Discord",
-    subtitle: "2025 Wrapped",
+    subtitle: `${year} Wrapped`,
     description: "Let's dive into your year...",
   })
 
@@ -132,7 +134,7 @@ function createSlides(data: DiscordData) {
     statSize: "text-7xl md:text-9xl",
     label: "Days Active",
     progress: activePercent,
-    description: `${activePercent}% attendance rate in 2025`,
+    description: `${activePercent}% attendance rate in ${year}`,
     subtext: `${data.totalDaysSpan} days tracked`,
   })
 
@@ -255,7 +257,7 @@ function createSlides(data: DiscordData) {
       stat: monthName,
       statSize: "text-5xl md:text-7xl",
       label: "Your Month",
-      description: `${compactNumber(data.mostActiveMonthCount)} messages in ${monthName} 2025`,
+      description: `${compactNumber(data.mostActiveMonthCount)} messages in ${monthName} ${year}`,
     })
   }
 
@@ -470,7 +472,7 @@ function createSlides(data: DiscordData) {
   slides.push({
     id: "summary",
     type: "summary",
-    title: "Your 2025 Wrapped",
+    title: `Your ${year} Wrapped`,
     stats: {
       messages: data.totalMessages,
       words: data.totalWords,
@@ -491,9 +493,9 @@ function createSlides(data: DiscordData) {
     id: "outro",
     type: "outro",
     title: "That's a Wrap!",
-    subtitle: "2025",
+    subtitle: `${year}`,
     description: "Thanks for being part of Discord this year",
-    funFact: "See you in 2026!",
+    funFact: `See you in ${year + 1}! 🎉`,
   })
 
   return slides
