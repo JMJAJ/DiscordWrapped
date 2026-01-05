@@ -59,7 +59,7 @@ interface DiscordData {
 function formatStat(num: number): { value: string; size: string } {
   const formatted = num.toLocaleString()
   const len = formatted.length
-  
+
   if (len <= 5) return { value: formatted, size: "text-7xl md:text-9xl" }
   if (len <= 7) return { value: formatted, size: "text-6xl md:text-8xl" }
   if (len <= 9) return { value: formatted, size: "text-5xl md:text-7xl" }
@@ -77,9 +77,9 @@ function createSlides(data: DiscordData) {
   const slides: any[] = []
   const year = data.year || 2025
 
-  const { 
-    MessageSquare, Calendar, Clock, Zap, 
-    Heart, Smile, Target, Moon, Sun, 
+  const {
+    MessageSquare, Calendar, Clock, Zap,
+    Heart, Smile, Target, Moon, Sun,
     Coffee, Link, AtSign, Megaphone, Sparkles,
     Ghost, MessageCircle, BarChart3, Award, Flame
   } = require("lucide-react")
@@ -117,7 +117,7 @@ function createSlides(data: DiscordData) {
       stat: wordStat.value,
       statSize: wordStat.size,
       label: "Words Typed",
-      description: novels > 0 
+      description: novels > 0
         ? `That's ${novels} novel${novels > 1 ? 's' : ''} worth of text!`
         : `Avg ${Math.round(data.avgWordsPerMessage)} words per message`,
       funFact: data.totalWords > 500000 ? "Your fingers must be tired!" : null,
@@ -159,7 +159,7 @@ function createSlides(data: DiscordData) {
     if (hour >= 17 && hour < 21) return "🌆"
     return "🌙"
   }
-  
+
   const formatHour = (hour: number) => {
     if (hour === 0) return "12 AM"
     if (hour < 12) return `${hour} AM`
@@ -181,7 +181,7 @@ function createSlides(data: DiscordData) {
   // Night owl vs Early bird
   const nightOwlPercent = Math.round((data.nightOwlCount / data.totalMessages) * 100)
   const earlyBirdPercent = Math.round((data.earlyBirdCount / data.totalMessages) * 100)
-  
+
   if (nightOwlPercent > earlyBirdPercent && nightOwlPercent > 3) {
     slides.push({
       id: "night-owl",
@@ -461,14 +461,14 @@ function createSlides(data: DiscordData) {
   // Summary card - Spotify style
   const totalSentimentCalc = data.sentimentPositive + data.sentimentNegative
   const positivePercentCalc = totalSentimentCalc > 0 ? Math.round((data.sentimentPositive / totalSentimentCalc) * 100) : 50
-  
+
   // Format busiest day nicely
   const formatBusiestDay = (dateStr: string | null) => {
     if (!dateStr) return null
     const date = new Date(dateStr)
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
-  
+
   slides.push({
     id: "summary",
     type: "summary",
@@ -576,34 +576,18 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
   return (
     <div className="relative min-h-screen overflow-hidden bg-black">
       {/* Animated background */}
-      <motion.div 
+      <motion.div
         key={currentSlide}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.5 }}
-        className={`absolute inset-0 bg-gradient-to-br ${gradient}`} 
+        className={`absolute inset-0 bg-gradient-to-br ${gradient}`}
       />
-      
-      {/* Floating orbs */}
-      <div className="absolute inset-0 overflow-hidden">
-        <motion.div 
-          animate={{ 
-            x: [0, 50, 0], 
-            y: [0, -30, 0],
-            scale: [1, 1.1, 1]
-          }}
-          transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-20 left-10 w-72 h-72 bg-red-600/10 rounded-full blur-3xl" 
-        />
-        <motion.div 
-          animate={{ 
-            x: [0, -40, 0], 
-            y: [0, 40, 0],
-            scale: [1, 1.2, 1]
-          }}
-          transition={{ duration: 10, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-          className="absolute bottom-20 right-10 w-96 h-96 bg-red-800/10 rounded-full blur-3xl" 
-        />
+
+      {/* Floating orbs - Reduced blur for performance */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 left-10 w-72 h-72 bg-red-600/10 rounded-full blur-2xl animate-pulse" />
+        <div className="absolute bottom-20 right-10 w-96 h-96 bg-red-800/10 rounded-full blur-2xl animate-pulse" />
       </div>
 
       {/* Main content */}
@@ -634,7 +618,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                   <h1 className="text-6xl md:text-8xl font-black text-white mb-4 tracking-tight">
                     {slide.title}
                   </h1>
-                  <motion.h2 
+                  <motion.h2
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 }}
@@ -668,7 +652,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
             {slide.type === "list" && (
               <Card className="bg-zinc-900/80 border-red-900/30 p-6 md:p-10 backdrop-blur-md">
                 <div className="space-y-6">
-                  <motion.div 
+                  <motion.div
                     initial={{ x: -20, opacity: 0 }}
                     animate={{ x: 0, opacity: 1 }}
                     className="flex items-center gap-4"
@@ -695,7 +679,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       </motion.div>
                     ))}
                   </div>
-                  <motion.p 
+                  <motion.p
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.8 }}
@@ -731,17 +715,17 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                     </h2>
                     <p className="text-2xl md:text-3xl font-bold text-white">{slide.label}</p>
                   </motion.div>
-                  
+
                   {/* Progress bar for progress type */}
                   {slide.type === "progress" && slide.progress !== undefined && (
-                    <motion.div 
+                    <motion.div
                       initial={{ opacity: 0, scaleX: 0 }}
                       animate={{ opacity: 1, scaleX: 1 }}
                       transition={{ delay: 0.4, duration: 0.5 }}
                       className="w-full max-w-md mx-auto"
                     >
                       <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
-                        <motion.div 
+                        <motion.div
                           initial={{ width: 0 }}
                           animate={{ width: `${slide.progress}%` }}
                           transition={{ delay: 0.6, duration: 0.8, ease: "easeOut" }}
@@ -753,7 +737,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       )}
                     </motion.div>
                   )}
-                  
+
                   <motion.p
                     initial={{ y: 20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
@@ -762,7 +746,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                   >
                     {slide.description}
                   </motion.p>
-                  
+
                   {slide.funFact && (
                     <motion.p
                       initial={{ y: 10, opacity: 0 }}
@@ -788,7 +772,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                   >
                     {slide.title}
                   </motion.h2>
-                  
+
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
                     {/* Messages */}
                     <motion.div
@@ -800,7 +784,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       <p className="text-2xl md:text-3xl font-black text-red-400">{compactNumber(slide.stats.messages)}</p>
                       <p className="text-xs md:text-sm text-gray-400">Messages</p>
                     </motion.div>
-                    
+
                     {/* Words */}
                     <motion.div
                       initial={{ scale: 0, opacity: 0 }}
@@ -811,7 +795,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       <p className="text-2xl md:text-3xl font-black text-orange-400">{compactNumber(slide.stats.words)}</p>
                       <p className="text-xs md:text-sm text-gray-400">Words</p>
                     </motion.div>
-                    
+
                     {/* Days Active */}
                     <motion.div
                       initial={{ scale: 0, opacity: 0 }}
@@ -822,7 +806,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       <p className="text-2xl md:text-3xl font-black text-pink-400">{slide.stats.daysActive}</p>
                       <p className="text-xs md:text-sm text-gray-400">Days Active</p>
                     </motion.div>
-                    
+
                     {/* Longest Streak */}
                     <motion.div
                       initial={{ scale: 0, opacity: 0 }}
@@ -833,7 +817,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       <p className="text-2xl md:text-3xl font-black text-yellow-400">{slide.stats.longestStreak}</p>
                       <p className="text-xs md:text-sm text-gray-400">Day Streak</p>
                     </motion.div>
-                    
+
                     {/* Peak Hour */}
                     <motion.div
                       initial={{ scale: 0, opacity: 0 }}
@@ -846,7 +830,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       </p>
                       <p className="text-xs md:text-sm text-gray-400">Peak Hour</p>
                     </motion.div>
-                    
+
                     {/* Positive Vibes */}
                     <motion.div
                       initial={{ scale: 0, opacity: 0 }}
@@ -858,7 +842,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       <p className="text-xs md:text-sm text-gray-400">Positive</p>
                     </motion.div>
                   </div>
-                  
+
                   {/* Highlights row */}
                   <div className="space-y-3">
                     {/* Top Channel */}
@@ -871,7 +855,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       <span className="text-gray-400 text-xs">Favorite Channel</span>
                       <span className="text-white font-bold text-sm break-words">#{slide.stats.topChannel}</span>
                     </motion.div>
-                    
+
                     {/* Top Emoji */}
                     {slide.stats.topEmoji && (
                       <motion.div
@@ -884,7 +868,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                         <span className="text-white font-bold text-sm">:{slide.stats.topEmoji}:</span>
                       </motion.div>
                     )}
-                    
+
                     {/* Top Word */}
                     {slide.stats.topWord && (
                       <motion.div
@@ -897,7 +881,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                         <span className="text-white font-bold text-sm">"{slide.stats.topWord}"</span>
                       </motion.div>
                     )}
-                    
+
                     {/* Busiest Day */}
                     {slide.stats.busiestDay && (
                       <motion.div
@@ -940,11 +924,10 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                     setDirection(index > currentSlide ? 1 : -1)
                     setCurrentSlide(index)
                   }}
-                  className={`rounded-full transition-all duration-300 ${
-                    index === currentSlide 
-                      ? "w-6 h-2 bg-red-500" 
-                      : "w-2 h-2 bg-gray-600 hover:bg-gray-500"
-                  }`}
+                  className={`rounded-full transition-all duration-300 ${index === currentSlide
+                    ? "w-6 h-2 bg-red-500"
+                    : "w-2 h-2 bg-gray-600 hover:bg-gray-500"
+                    }`}
                 />
               ))}
             </div>
@@ -958,7 +941,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
               <ChevronRight className="w-5 h-5" />
             </Button>
           </div>
-          
+
           {/* Slide counter */}
           <p className="text-center text-xs text-gray-500 mt-2">
             {currentSlide + 1} / {slides.length} • Use arrow keys to navigate

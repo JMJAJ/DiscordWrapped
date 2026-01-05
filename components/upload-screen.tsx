@@ -5,7 +5,7 @@ import { motion } from "framer-motion"
 import { Upload, FileArchive, Loader2, AlertCircle, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { processDiscordZip, calculateStats } from "@/lib/client-db"
+import { processAndAnalyze } from "@/lib/client-db"
 
 interface UploadScreenProps {
   onDataReady: (data: any) => void
@@ -28,13 +28,8 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
     setProgress({ stage: 'Starting...', percent: 0 })
 
     try {
-      // Process the ZIP file
-      const messages = await processDiscordZip(file, (stage, percent) => {
-        setProgress({ stage, percent })
-      })
-
-      // Calculate stats
-      const stats = await calculateStats(messages, (stage, percent) => {
+      // Process and analyze the ZIP file
+      const stats = await processAndAnalyze(file, (stage, percent) => {
         setProgress({ stage, percent })
       })
 
@@ -49,7 +44,7 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
-    
+
     const file = e.dataTransfer.files[0]
     if (file) handleFile(file)
   }, [handleFile])
@@ -85,7 +80,7 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
               >
                 <Loader2 className="w-16 h-16 text-red-500 mx-auto" />
               </motion.div>
-              
+
               <div className="space-y-2">
                 <h2 className="text-xl font-bold text-white">{progress.stage}</h2>
                 <div className="w-full bg-zinc-800 rounded-full h-3 overflow-hidden">
@@ -98,7 +93,7 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
                 </div>
                 <p className="text-sm text-gray-400">{progress.percent}%</p>
               </div>
-              
+
               <p className="text-xs text-gray-500">
                 Processing happens entirely in your browser.<br />
                 Your data never leaves your device.
@@ -142,9 +137,8 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
         </div>
 
         <Card
-          className={`bg-zinc-900/80 border-2 border-dashed p-8 backdrop-blur-md transition-colors cursor-pointer ${
-            isDragging ? 'border-red-500 bg-red-900/20' : 'border-red-900/30 hover:border-red-500/50'
-          }`}
+          className={`bg-zinc-900/80 border-2 border-dashed p-8 backdrop-blur-md transition-colors cursor-pointer ${isDragging ? 'border-red-500 bg-red-900/20' : 'border-red-900/30 hover:border-red-500/50'
+            }`}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -156,7 +150,7 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
               onChange={handleInputChange}
               className="hidden"
             />
-            
+
             <div className="text-center space-y-4">
               <motion.div
                 animate={isDragging ? { scale: 1.1 } : { scale: 1 }}
@@ -168,7 +162,7 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
                   <Upload className="w-16 h-16 text-red-500" />
                 )}
               </motion.div>
-              
+
               <div>
                 <h3 className="text-xl font-bold text-white mb-2">
                   {isDragging ? 'Drop it here!' : 'Upload Your Discord Data'}
@@ -178,10 +172,10 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
                   or click to browse
                 </p>
               </div>
-
+              {/* 
               <Button className="bg-red-600 hover:bg-red-500 text-white">
                 Select ZIP File
-              </Button>
+              </Button> */}
             </div>
           </label>
         </Card>
@@ -215,13 +209,13 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
             <ol className="text-sm text-gray-400 space-y-2 list-decimal list-inside">
               <li>Open Discord → Settings → Privacy & Safety</li>
               <li>Scroll down and click "Request all of my Data"</li>
-              <li>Wait for Discord's email (24-48 hours)</li>
+              <li>Wait for Discord's email (14-30 days)</li>
               <li>Download the ZIP file and upload it here</li>
             </ol>
           </Card>
 
           <p className="text-xs text-gray-500 text-center">
-            🔒 Your data is processed entirely in your browser.<br />
+            Your data is processed entirely in your browser.<br />
             Nothing is uploaded to any server.
           </p>
         </motion.div>
