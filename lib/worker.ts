@@ -32,21 +32,95 @@ function postProgress(stage: string, percent: number) {
   ctx.postMessage({ type: 'progress', stage, percent })
 }
 
-ctx.onmessage = async (e: MessageEvent<File>) => {
+function extractFriendlyChannelName(raw?: string | null): string {
+  if (!raw) return ''
+  const directMatch = raw.match(/Direct Message with (.+)/i)
+  if (directMatch) return directMatch[1].trim()
+  const groupMatch = raw.match(/Group Message with (.+)/i)
+  if (groupMatch) return groupMatch[1].trim()
+  const trimmed = raw.trim()
+  if (/#0$/i.test(trimmed)) {
+    return trimmed.replace(/#0$/i, '')
+  }
+  return trimmed
+}
+
+function composeGuildChannelLabel(guildName: string, channelName: string): string {
+  const guild = guildName.trim()
+  const channel = channelName.trim()
+  if (!channel) return guild
+  return `${guild} • ${channel}`
+}
+
+function normalizeTimestamp(raw: unknown): string | null {
+  if (!raw) return null
+
+  if (raw instanceof Date) {
+    return raw.toISOString()
+  }
+
+  if (typeof raw === 'number') {
+    const fromNumber = new Date(raw)
+    return Number.isFinite(fromNumber.getTime()) ? fromNumber.toISOString() : null
+  }
+
+  if (typeof raw !== 'string') return null
+
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+
+  let candidate = trimmed
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
+    candidate = `${candidate}T00:00:00`
+  }
+
+  if (!candidate.includes('T') && candidate.includes(' ')) {
+    const firstSpace = candidate.indexOf(' ')
+    candidate = `${candidate.slice(0, firstSpace)}T${candidate.slice(firstSpace + 1)}`
+  }
+
+  candidate = candidate.replace(/(\.\d{3})\d+/, '$1')
+
+  if (!/(Z|z|[+-]\d{2}:?\d{2})$/.test(candidate)) {
+    candidate = `${candidate}Z`
+  }
+
+  const parsed = new Date(candidate)
+  if (!Number.isFinite(parsed.getTime())) {
+    return null
+  }
+
+  return parsed.toISOString()
+}
+
+interface WorkerRequest {
+  file: File
+  targetYear?: number
+}
+
+ctx.onmessage = async (e: MessageEvent<File | WorkerRequest>) => {
   try {
-    const file = e.data
-    const stats = await processAndAnalyze(file)
+    const payload = e.data as any
+    const file: File = payload?.file ?? payload
+    const explicitYear = typeof payload?.targetYear === 'number' ? payload.targetYear : undefined
+
+    if (!(file instanceof File)) {
+      throw new Error('Invalid file provided to worker')
+    }
+
+    const stats = await processAndAnalyze(file, explicitYear)
     ctx.postMessage({ type: 'done', stats })
   } catch (err: any) {
     console.error('Worker error:', err)
     ctx.postMessage({
       type: 'error',
-      error: err.message || 'Unknown processing error'
+      error: err?.message || 'Unknown processing error'
     })
   }
 }
 
-async function processAndAnalyze(file: File): Promise<any> {
+async function processAndAnalyze(file: File, explicitYear?: number): Promise<any> {
   // 1. Initialize DB
   postProgress('Initializing database...', 5)
   await initDuckDB()
@@ -78,6 +152,86 @@ async function processAndAnalyze(file: File): Promise<any> {
     }
   })
 
+  const channelNameOverrides: Record<string, string> = {}
+  const guildNameOverrides: Record<string, string> = {}
+  const registerGuildName = (id?: string | null, name?: unknown) => {
+    if (!id) return
+    if (typeof name === 'string' && name.trim()) {
+      const friendly = extractFriendlyChannelName(name)
+      if (friendly) guildNameOverrides[id] = friendly
+    }
+  }
+  try {
+    const indexFiles = contents.file(/index\.json$/i) as JSZip.JSZipObject[]
+    for (const indexFile of indexFiles) {
+      if (indexFile.dir) continue
+      if (!/\/?messages\/index\.json$/i.test(indexFile.name)) continue
+      const text = await indexFile.async('string')
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object') {
+        for (const [key, value] of Object.entries(parsed as Record<string, any>)) {
+          if (typeof value === 'string') {
+            const friendly = extractFriendlyChannelName(value)
+            if (friendly) channelNameOverrides[key] = friendly
+          } else if (value && typeof value === 'object' && 'name' in value) {
+            const friendly = extractFriendlyChannelName(String((value as any).name))
+            if (friendly) channelNameOverrides[key] = friendly
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to parse index.json for channel names', err)
+  }
+
+  try {
+    const guildIndexFiles = contents.file(/guilds\/index\.json$/i) as JSZip.JSZipObject[]
+    for (const guildIndexFile of guildIndexFiles) {
+      if (guildIndexFile.dir) continue
+      const text = await guildIndexFile.async('string')
+      const parsed = JSON.parse(text)
+      if (Array.isArray(parsed)) {
+        for (const entry of parsed) {
+          if (!entry) continue
+          const id = typeof entry.id === 'string' ? entry.id : undefined
+          const name = (entry as any).name ?? (entry as any).label ?? (entry as any).value
+          registerGuildName(id, name)
+        }
+      } else if (parsed && typeof parsed === 'object') {
+        for (const [key, value] of Object.entries(parsed as Record<string, any>)) {
+          if (typeof value === 'string') {
+            registerGuildName(key, value)
+          } else if (value && typeof value === 'object') {
+            const name = value.name ?? value.label ?? value.value
+            registerGuildName(key, name)
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to parse guild index for server names', err)
+  }
+
+  try {
+    const guildDetailFiles = contents.file(/guilds\/[\w-]+\/guild\.json$/i) as JSZip.JSZipObject[]
+    for (const guildDetailFile of guildDetailFiles) {
+      if (guildDetailFile.dir) continue
+      try {
+        const text = await guildDetailFile.async('string')
+        const parsed = JSON.parse(text)
+        const pathMatch = guildDetailFile.name.match(/guilds\/(.+)\/guild\.json$/i)
+        const idFromPath = pathMatch ? pathMatch[1] : undefined
+        const id = typeof parsed?.id === 'string' ? parsed.id : idFromPath
+        const name = parsed?.name ?? parsed?.label
+        registerGuildName(id, name)
+      } catch (detailErr) {
+        console.warn(`Failed to parse ${guildDetailFile.name}`, detailErr)
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to parse guild detail files', err)
+  }
+
   if (messageFiles.length === 0) {
     throw new Error('No message files found in ZIP. Make sure this is a Discord data export.')
   }
@@ -93,36 +247,124 @@ async function processAndAnalyze(file: File): Promise<any> {
   for (const filePath of messageFiles) {
     try {
       const content = await contents.file(filePath)?.async('string')
-      if (content) {
-        const data = JSON.parse(content)
-        const messages = Array.isArray(data) ? data : (data.messages || [])
+      if (!content) continue
 
-        if (messages.length > 0) {
-          const channelPath = filePath.replace('messages.json', 'channel.json')
-          let channelName = 'Unknown'
-          try {
-            const cContent = await contents.file(channelPath)?.async('string')
-            if (cContent) {
-              const cData = JSON.parse(cContent)
-              channelName = cData.name || cData.id || 'Unknown'
+      const data = JSON.parse(content)
+      const messages = Array.isArray(data) ? data : data?.messages || []
+      if (!Array.isArray(messages) || messages.length === 0) continue
+
+      const channelPath = filePath.replace('messages.json', 'channel.json')
+      const folderParts = filePath.split('/')
+      const folderName = folderParts.length > 1 ? folderParts[folderParts.length - 2] : ''
+      const channelId = folderName.startsWith('c') ? folderName.slice(1) : folderName
+      let channelName = channelNameOverrides[channelId] || ''
+      let guildName = ''
+      let isDirectMessage = false
+
+      try {
+        const cContent = await contents.file(channelPath)?.async('string')
+        if (cContent) {
+          const cData = JSON.parse(cContent)
+          const candidates: string[] = []
+          if (typeof cData.name === 'string') {
+            candidates.push(cData.name)
+          }
+          if (Array.isArray(cData.recipients)) {
+            isDirectMessage = true
+            const recipientNames = cData.recipients
+              .map((recipient: any) => {
+                const username = recipient?.username
+                if (!username) return null
+                const discriminator = recipient?.discriminator
+                if (discriminator !== undefined && discriminator !== null) {
+                  return `${username}#${discriminator}`
+                }
+                return username
+              })
+              .filter(Boolean) as string[]
+            if (recipientNames.length > 0) {
+              candidates.push(recipientNames.join(', '))
             }
-          } catch { }
-
-          for (const m of messages) {
-            const ts = m.Timestamp || m.timestamp
-            if (!ts) continue
-
-            const id = String(m.ID || m.id || '').replace(/'/g, "''")
-            const contents = String(m.Contents || m.contents || '').replace(/'/g, "''")
-            const attachments = String(m.Attachments || m.attachments || '').replace(/'/g, "''")
-            const cName = String(channelName || 'Unknown').replace(/'/g, "''")
-
-            rowBuffer.push(`('${id}', '${ts}', '${contents}', '${attachments}', '${cName}')`)
+          }
+          if (channelNameOverrides[channelId]) {
+            candidates.push(channelNameOverrides[channelId])
+          }
+          if (typeof cData.id === 'string') {
+            candidates.push(cData.id)
           }
 
-          totalMessagesInserted += messages.length
+          const resolved = candidates
+            .map(name => extractFriendlyChannelName(name))
+            .find(Boolean)
+          if (resolved) {
+            channelName = resolved
+          }
+
+          if (typeof cData.guild_id === 'string') {
+            guildName = guildNameOverrides[cData.guild_id] || guildName
+          }
+          if (!guildName && cData.guild) {
+            if (typeof cData.guild === 'string') {
+              guildName = cData.guild
+            } else if (typeof cData.guild.name === 'string') {
+              guildName = cData.guild.name
+            }
+          }
         }
+      } catch (err) {
+        console.warn(`Failed to read channel metadata for ${filePath}`, err)
       }
+
+      if (channelName) {
+        channelName = extractFriendlyChannelName(channelName)
+      }
+      if (!channelName && channelNameOverrides[channelId]) {
+        channelName = extractFriendlyChannelName(channelNameOverrides[channelId])
+      }
+      if (!channelName) {
+        channelName = 'Unknown'
+      }
+      if (guildName) {
+        guildName = extractFriendlyChannelName(guildName)
+      }
+      if (guildName && !isDirectMessage) {
+        channelName = channelName === 'Unknown'
+          ? guildName
+          : composeGuildChannelLabel(guildName, channelName)
+      }
+      const safeChannelName = channelName.replace(/'/g, "''")
+
+      let insertedFromFile = 0
+      for (const m of messages) {
+        const rawTimestamp =
+          m.Timestamp ??
+          m.timestamp ??
+          m.Date ??
+          m.date ??
+          m.PulledTimestamp ??
+          m.pulledTimestamp ??
+          (m as any)['Pulled Timestamp'] ??
+          (m as any)['pulled timestamp'] ??
+          m.PulledDate ??
+          m.pulledDate ??
+          (m as any)['Pulled Date'] ??
+          (m as any)['pulled date'] ??
+          m.pulled_at ??
+          m.pulledAt
+        const ts = normalizeTimestamp(rawTimestamp)
+        if (!ts) continue
+
+        const timestamp = ts.replace(/'/g, "''")
+        const id = String(m.ID ?? m.id ?? '').replace(/'/g, "''")
+        const contents = String(m.Contents ?? m.contents ?? '').replace(/'/g, "''")
+        const attachments = String(m.Attachments ?? m.attachments ?? '').replace(/'/g, "''")
+        const cName = safeChannelName
+
+        rowBuffer.push(`('${id}', '${timestamp}', '${contents}', '${attachments}', '${cName}')`)
+        insertedFromFile++
+      }
+
+      totalMessagesInserted += insertedFromFile
     } catch (e) {
       console.warn(`Failed to process ${filePath}`, e)
     }
@@ -155,45 +397,67 @@ async function processAndAnalyze(file: File): Promise<any> {
   const yearStats = await conn.query(`
       SELECT EXTRACT(YEAR FROM Timestamp) as y, COUNT(*) as c
       FROM messages 
-      WHERE y IS NOT NULL
+      WHERE Timestamp IS NOT NULL
       GROUP BY y
       ORDER BY y DESC
     `)
 
-  let targetYear = new Date().getFullYear()
+  let availableYears: number[] = []
+  let targetYear = explicitYear ?? new Date().getFullYear()
+  let yearArr: any[] = []
+
   try {
-    const yearArr = yearStats.toArray()
-    if (yearArr.length > 0) {
-      targetYear = Number(yearArr[0].y)
+    yearArr = yearStats.toArray()
+    availableYears = yearArr
+      .map((row: any) => Number(row.y))
+      .filter((year: number) => Number.isFinite(year))
 
-      // Smart Check: If the latest year is the current calendar year,
-      // but we're still in January or February, the user likely wants 
-      // the previous full year's wrapped, not a wrapped for the last few days.
-      const now = new Date()
-      const currentYear = now.getFullYear()
-      const currentMonth = now.getMonth() // 0 = January
+    if (explicitYear !== undefined) {
+      if (availableYears.includes(explicitYear)) {
+        targetYear = explicitYear
+      } else {
+        const list = availableYears.length ? ` Available years: ${availableYears.join(', ')}` : ''
+        throw new Error(`No messages found for year ${explicitYear}.${list}`)
+      }
+    } else if (availableYears.length > 0) {
+      const preferredYear = 2025
+      targetYear = availableYears.includes(preferredYear) ? preferredYear : availableYears[0]
+    }
+  } catch (e) {
+    if (explicitYear !== undefined) throw e
+    console.warn('Year detection failed', e)
+  }
 
-      if (targetYear === currentYear && currentMonth < 2 && yearArr.length > 1) {
-        // Check if the next year in the list is actually the previous year
-        const prevYear = Number(yearArr[1].y)
-        if (prevYear === targetYear - 1) {
-          targetYear = prevYear
-        }
+  try {
+    const now = new Date()
+    const currentYear = now.getFullYear()
+    const currentMonth = now.getMonth()
+
+    if (targetYear === currentYear && currentMonth < 2 && yearArr.length > 1) {
+      const prevYear = Number(yearArr[1].y)
+      if (Number.isFinite(prevYear) && prevYear === targetYear - 1) {
+        targetYear = prevYear
       }
     }
-  } catch (e) { console.warn("Year detection failed", e) }
+  } catch (e) {
+    console.warn('Smart year fallback failed', e)
+  }
 
   postProgress(`Filtering for ${targetYear}...`, 90)
   await conn.query(`DELETE FROM messages WHERE EXTRACT(YEAR FROM Timestamp) != ${targetYear}`)
 
   const countStats = await conn.query(`SELECT COUNT(*) as c FROM messages`)
-  const count = Number(countStats.toArray()[0].c)
-  if (count === 0) throw new Error(`No messages found for year ${targetYear}`)
+  const countRow = countStats.toArray()[0]
+  const count = countRow ? Number(countRow.c) : 0
+  if (count === 0) {
+    throw new Error(`No messages found for year ${targetYear}`)
+  }
 
   postProgress(`Analyzing ${count.toLocaleString()} messages from ${targetYear}...`, 92)
 
   const stats = await runStatsQueries(conn, postProgress)
   stats.year = targetYear
+  stats.availableYears = availableYears
 
   postProgress('Done!', 100)
 
@@ -452,6 +716,7 @@ async function runStatsQueries(conn: duckdb.AsyncDuckDBConnection, onProgress: (
 
   return {
     year: 0, // Will be set by caller
+    availableYears: [] as number[],
     totalMessages: getVal(totalMessages, 'count'),
     totalWords: getVal(textStats, 'total_words'),
     totalCharacters: getVal(textStats, 'total_chars'),

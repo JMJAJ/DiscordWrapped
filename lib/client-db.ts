@@ -1,8 +1,13 @@
 "use client"
 
+interface ProcessOptions {
+  year?: number
+}
+
 export async function processAndAnalyze(
   file: File,
-  onProgress: (stage: string, percent: number) => void
+  onProgress: (stage: string, percent: number) => void,
+  options: ProcessOptions = {}
 ): Promise<any> {
   return new Promise((resolve, reject) => {
     // Create the worker
@@ -28,7 +33,7 @@ export async function processAndAnalyze(
     }
 
     // Send the file to processing
-    worker.postMessage(file)
+    worker.postMessage({ file, targetYear: options.year })
   })
 }
 

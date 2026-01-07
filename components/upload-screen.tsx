@@ -3,12 +3,11 @@
 import { useState, useCallback } from "react"
 import { motion } from "framer-motion"
 import { Upload, FileArchive, Loader2, AlertCircle, CheckCircle2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { processAndAnalyze } from "@/lib/client-db"
 
 interface UploadScreenProps {
-  onDataReady: (data: any) => void
+  onDataReady: (data: any, file: File) => void
 }
 
 export function UploadScreen({ onDataReady }: UploadScreenProps) {
@@ -33,7 +32,7 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
         setProgress({ stage, percent })
       })
 
-      onDataReady(stats)
+      onDataReady(stats, file)
     } catch (err: any) {
       console.error('Processing error:', err)
       setError(err.message || 'Failed to process Discord data')
@@ -130,10 +129,13 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="text-4xl md:text-5xl font-black bg-gradient-to-r from-red-400 via-red-500 to-orange-500 bg-clip-text text-transparent"
+            className="text-3xl md:text-4xl font-black bg-gradient-to-r from-red-400 via-red-500 to-orange-500 bg-clip-text text-transparent"
           >
-            2025 Wrapped
+            Upload your data to begin
           </motion.h2>
+          <p className="mt-4 text-sm text-gray-400">
+            We will detect every year in your messages and let you choose which Wrapped to view.
+          </p>
         </div>
 
         <Card
