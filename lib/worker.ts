@@ -96,14 +96,17 @@ function normalizeTimestamp(raw: unknown): string | null {
 
 interface WorkerRequest {
   file: File
-  targetYear?: number
+  targetYear?: number | 'all' | null
 }
 
 ctx.onmessage = async (e: MessageEvent<File | WorkerRequest>) => {
   try {
     const payload = e.data as any
     const file: File = payload?.file ?? payload
-    const explicitYear = typeof payload?.targetYear === 'number' ? payload.targetYear : undefined
+    const explicitYear =
+      typeof payload?.targetYear === 'number' || payload?.targetYear === 'all'
+        ? payload.targetYear
+        : undefined
 
     if (!(file instanceof File)) {
       throw new Error('Invalid file provided to worker')
@@ -120,7 +123,7 @@ ctx.onmessage = async (e: MessageEvent<File | WorkerRequest>) => {
   }
 }
 
-async function processAndAnalyze(file: File, explicitYear?: number): Promise<any> {
+async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Promise<any> {
   // 1. Initialize DB
   postProgress('Initializing database...', 5)
   await initDuckDB()
@@ -402,8 +405,9 @@ async function processAndAnalyze(file: File, explicitYear?: number): Promise<any
       ORDER BY y DESC
     `)
 
+  const isAllTimeRequest = explicitYear === 'all'
   let availableYears: number[] = []
-  let targetYear = explicitYear ?? new Date().getFullYear()
+  let targetYear: number | null = null
   let yearArr: any[] = []
 
   try {
@@ -412,51 +416,64 @@ async function processAndAnalyze(file: File, explicitYear?: number): Promise<any
       .map((row: any) => Number(row.y))
       .filter((year: number) => Number.isFinite(year))
 
-    if (explicitYear !== undefined) {
-      if (availableYears.includes(explicitYear)) {
-        targetYear = explicitYear
-      } else {
-        const list = availableYears.length ? ` Available years: ${availableYears.join(', ')}` : ''
-        throw new Error(`No messages found for year ${explicitYear}.${list}`)
+    if (!isAllTimeRequest) {
+      if (typeof explicitYear === 'number') {
+        if (availableYears.includes(explicitYear)) {
+          targetYear = explicitYear
+        } else {
+          const list = availableYears.length ? ` Available years: ${availableYears.join(', ')}` : ''
+          throw new Error(`No messages found for year ${explicitYear}.${list}`)
+        }
+      } else if (availableYears.length > 0) {
+        const preferredYear = 2025
+        targetYear = availableYears.includes(preferredYear) ? preferredYear : availableYears[0]
       }
-    } else if (availableYears.length > 0) {
-      const preferredYear = 2025
-      targetYear = availableYears.includes(preferredYear) ? preferredYear : availableYears[0]
     }
   } catch (e) {
-    if (explicitYear !== undefined) throw e
+    if (typeof explicitYear === 'number') throw e
     console.warn('Year detection failed', e)
   }
 
-  try {
-    const now = new Date()
-    const currentYear = now.getFullYear()
-    const currentMonth = now.getMonth()
+  if (targetYear !== null) {
+    try {
+      const now = new Date()
+      const currentYear = now.getFullYear()
+      const currentMonth = now.getMonth()
 
-    if (targetYear === currentYear && currentMonth < 2 && yearArr.length > 1) {
-      const prevYear = Number(yearArr[1].y)
-      if (Number.isFinite(prevYear) && prevYear === targetYear - 1) {
-        targetYear = prevYear
+      if (targetYear === currentYear && currentMonth < 2 && yearArr.length > 1) {
+        const prevYear = Number(yearArr[1].y)
+        if (Number.isFinite(prevYear) && prevYear === targetYear - 1) {
+          targetYear = prevYear
+        }
       }
+    } catch (e) {
+      console.warn('Smart year fallback failed', e)
     }
-  } catch (e) {
-    console.warn('Smart year fallback failed', e)
   }
 
-  postProgress(`Filtering for ${targetYear}...`, 90)
-  await conn.query(`DELETE FROM messages WHERE EXTRACT(YEAR FROM Timestamp) != ${targetYear}`)
+  if (targetYear !== null) {
+    postProgress(`Filtering for ${targetYear}...`, 90)
+    await conn.query(`DELETE FROM messages WHERE EXTRACT(YEAR FROM Timestamp) != ${targetYear}`)
+  } else {
+    postProgress('Preparing all-time view...', 90)
+  }
 
   const countStats = await conn.query(`SELECT COUNT(*) as c FROM messages`)
   const countRow = countStats.toArray()[0]
   const count = countRow ? Number(countRow.c) : 0
   if (count === 0) {
-    throw new Error(`No messages found for year ${targetYear}`)
+    const suffix = targetYear !== null ? ` for year ${targetYear}` : ''
+    throw new Error(`No messages found${suffix}`)
   }
 
-  postProgress(`Analyzing ${count.toLocaleString()} messages from ${targetYear}...`, 92)
+  const analysisLabel = targetYear !== null
+    ? `from ${targetYear}`
+    : 'across all time'
+
+  postProgress(`Analyzing ${count.toLocaleString()} messages ${analysisLabel}...`, 92)
 
   const stats = await runStatsQueries(conn, postProgress)
-  stats.year = targetYear
+  stats.year = targetYear !== null ? targetYear : 'all'
   stats.availableYears = availableYears
 
   postProgress('Done!', 100)
@@ -469,7 +486,10 @@ async function processAndAnalyze(file: File, explicitYear?: number): Promise<any
   return stats
 }
 
-async function runStatsQueries(conn: duckdb.AsyncDuckDBConnection, onProgress: (stage: string, percent: number) => void) {
+async function runStatsQueries(
+  conn: duckdb.AsyncDuckDBConnection,
+  onProgress: (stage: string, percent: number) => void
+): Promise<Record<string, any>> {
   // Total messages
   const totalMessages = await conn.query(`SELECT COUNT(*) as count FROM messages`)
 

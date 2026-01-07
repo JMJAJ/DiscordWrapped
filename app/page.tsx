@@ -51,7 +51,7 @@ interface DiscordData {
   emojiOnlyCount: number
   conversationStarters: number
   ghostingDays: number
-  year?: number
+  year?: number | 'all' | null
   availableYears?: number[]
 }
 
@@ -60,7 +60,7 @@ export default function DiscordWrapped() {
   const [mode, setMode] = useState<'checking' | 'upload' | 'select-year' | 'loading' | 'ready' | 'error'>('checking')
   const [error, setError] = useState<string | null>(null)
   const [availableYears, setAvailableYears] = useState<number[]>([])
-  const [selectedYear, setSelectedYear] = useState<number | null>(null)
+  const [selectedYear, setSelectedYear] = useState<number | 'all' | null>(null)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [loadingProgress, setLoadingProgress] = useState<{ stage: string; percent: number }>({ stage: '', percent: 0 })
 
@@ -87,7 +87,7 @@ export default function DiscordWrapped() {
         
         if (result.success && result.data) {
           setData(result.data)
-          if (typeof result.data.year === 'number') {
+          if (typeof result.data.year === 'number' || result.data.year === 'all') {
             setSelectedYear(result.data.year)
           }
           const derived = deriveAvailableYears(result.data)
@@ -116,7 +116,12 @@ export default function DiscordWrapped() {
     setUploadedFile(file)
     const years = deriveAvailableYears(stats)
     setAvailableYears(years)
-    const defaultYear = stats.year ?? years[0] ?? null
+    let defaultYear: number | 'all' | null = null
+    if (stats.year === 'all' || typeof stats.year === 'number') {
+      defaultYear = stats.year
+    } else if (years.length > 0) {
+      defaultYear = years[0]
+    }
     setSelectedYear(defaultYear)
     setData(stats)
     setMode('select-year')
@@ -137,16 +142,22 @@ export default function DiscordWrapped() {
     setMode('loading')
     setLoadingProgress({ stage: 'Preparing analysis...', percent: 5 })
 
+    const target = selectedYear === 'all' ? 'all' : selectedYear
+
     processAndAnalyze(uploadedFile, (stage, percent) => {
       setLoadingProgress({ stage, percent })
-    }, { year: selectedYear })
+    }, { year: target ?? undefined })
       .then((stats) => {
         setData(stats)
         const years = deriveAvailableYears(stats)
         if (years.length) {
           setAvailableYears(years)
         }
-        setSelectedYear(stats.year ?? selectedYear)
+        if (stats.year === 'all' || typeof stats.year === 'number') {
+          setSelectedYear(stats.year)
+        } else {
+          setSelectedYear(selectedYear)
+        }
         setLoadingProgress({ stage: '', percent: 0 })
         setMode('ready')
       })
@@ -157,7 +168,7 @@ export default function DiscordWrapped() {
       })
   }
 
-  const handleYearSelect = (year: number) => {
+  const handleYearSelect = (year: number | 'all') => {
     setSelectedYear(year)
   }
 
@@ -244,7 +255,36 @@ export default function DiscordWrapped() {
 
   // Show wrapped slides when data is ready
   if (mode === 'ready' && data) {
-    return <WrappedSlides data={data} />
+    const rangeLabel = data.year === 'all'
+      ? 'All Time'
+      : typeof data.year === 'number'
+        ? `${data.year}`
+        : 'Selected Range'
+
+    return (
+      <div className="relative">
+        <div className="absolute top-4 right-4 z-50 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <span className="rounded-full border border-zinc-700/60 bg-black/60 px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-gray-200">
+            {rangeLabel}
+          </span>
+          <button
+            type="button"
+            onClick={() => setMode('select-year')}
+            className="rounded-full px-4 py-2 text-xs sm:text-sm font-medium bg-black/60 border border-red-500/60 text-white hover:bg-red-600/70 transition"
+          >
+            Change Range
+          </button>
+          <button
+            type="button"
+            onClick={handleReupload}
+            className="rounded-full px-4 py-2 text-xs sm:text-sm font-medium bg-black/60 border border-zinc-700 text-gray-200 hover:bg-zinc-800 transition"
+          >
+            Upload New ZIP
+          </button>
+        </div>
+        <WrappedSlides data={data} />
+      </div>
+    )
   }
 
   // Error state

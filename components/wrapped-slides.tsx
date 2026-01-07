@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 
 interface DiscordData {
-  year?: number
+  year?: number | 'all' | null
   totalMessages: number
   totalWords: number
   totalCharacters: number
@@ -53,6 +53,7 @@ interface DiscordData {
   emojiOnlyCount: number
   conversationStarters: number
   ghostingDays: number
+  availableYears?: number[]
 }
 
 // Smart number formatter - scales text size based on number length
@@ -75,7 +76,10 @@ function compactNumber(num: number): string {
 
 function createSlides(data: DiscordData) {
   const slides: any[] = []
-  const year = data.year || 2025
+  const isAllTime = data.year === 'all'
+  const fallbackYear = data.availableYears?.[0] ?? new Date().getFullYear()
+  const numericYear = typeof data.year === 'number' ? data.year : fallbackYear
+  const yearLabel = isAllTime ? 'All-Time' : `${numericYear}`
 
   const {
     MessageSquare, Calendar, Clock, Zap,
@@ -89,8 +93,8 @@ function createSlides(data: DiscordData) {
     id: "intro",
     type: "intro",
     title: "Your Discord",
-    subtitle: `${year} Wrapped`,
-    description: "Let's dive into your year...",
+    subtitle: isAllTime ? "All-Time Wrapped" : `${yearLabel} Wrapped`,
+    description: isAllTime ? "Let's relive your entire Discord story..." : "Let's dive into your year...",
   })
 
   // Total messages - with dynamic sizing
@@ -134,7 +138,9 @@ function createSlides(data: DiscordData) {
     statSize: "text-7xl md:text-9xl",
     label: "Days Active",
     progress: activePercent,
-    description: `${activePercent}% attendance rate in ${year}`,
+    description: isAllTime
+      ? `${activePercent}% attendance rate across your Discord history`
+      : `${activePercent}% attendance rate in ${yearLabel}`,
     subtext: `${data.totalDaysSpan} days tracked`,
   })
 
@@ -263,7 +269,15 @@ function createSlides(data: DiscordData) {
 
   // Most active month
   if (data.mostActiveMonth) {
-    const monthName = new Date(data.mostActiveMonth + "-01").toLocaleDateString('en-US', { month: 'long' })
+    const parsedMonth = new Date(data.mostActiveMonth + "-01")
+    const monthValid = !Number.isNaN(parsedMonth.getTime())
+    const monthName = monthValid
+      ? parsedMonth.toLocaleDateString('en-US', { month: 'long' })
+      : data.mostActiveMonth
+    const monthYear = monthValid ? parsedMonth.getFullYear() : null
+    const monthLabel = monthValid
+      ? parsedMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      : data.mostActiveMonth
     slides.push({
       id: "most-active-month",
       type: "stat",
@@ -271,7 +285,9 @@ function createSlides(data: DiscordData) {
       stat: monthName,
       statSize: "text-5xl md:text-7xl",
       label: "Your Month",
-      description: `${compactNumber(data.mostActiveMonthCount)} messages in ${monthName} ${year}`,
+      description: isAllTime
+        ? `${compactNumber(data.mostActiveMonthCount)} messages in ${monthLabel}`
+        : `${compactNumber(data.mostActiveMonthCount)} messages in ${monthName} ${monthYear ?? numericYear}`,
     })
   }
 
@@ -490,7 +506,7 @@ function createSlides(data: DiscordData) {
   slides.push({
     id: "summary",
     type: "summary",
-    title: `Your ${year} Wrapped`,
+    title: isAllTime ? "Your All-Time Wrapped" : `Your ${yearLabel} Wrapped`,
     stats: {
       messages: data.totalMessages,
       words: data.totalWords,
@@ -511,9 +527,9 @@ function createSlides(data: DiscordData) {
     id: "outro",
     type: "outro",
     title: "That's a Wrap!",
-    subtitle: `${year}`,
-    description: "Thanks for being part of Discord this year",
-    funFact: `See you in ${year + 1}! 🎉`,
+    subtitle: yearLabel,
+    description: isAllTime ? "Thanks for being part of Discord through it all." : "Thanks for being part of Discord this year",
+    funFact: isAllTime ? "Your story keeps growing. 🎉" : `See you in ${numericYear + 1}! 🎉`,
   })
 
   return slides
