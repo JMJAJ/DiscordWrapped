@@ -410,7 +410,6 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
   let targetYear: number | null = null
   let yearArr: any[] = []
 
-<<<<<<< Updated upstream
   try {
     yearArr = yearStats.toArray()
     availableYears = yearArr
@@ -437,8 +436,6 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
 
   if (targetYear !== null) {
     try {
-=======
->>>>>>> Stashed changes
       const now = new Date()
       const currentYear = now.getFullYear()
       const currentMonth = now.getMonth()
