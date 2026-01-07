@@ -18,7 +18,7 @@ interface DiscordData {
   avgWordsPerMessage: number
   topChannels: Array<{ name: string; count: number }>
   topWords: Array<{ word: string; count: number }>
-  topEmojis: Array<{ name: string; id: string; count: number }>
+  topEmojis: Array<{ name: string; id: string; count: number; isAnimated?: boolean }>
   screamingCount: number
   questionCount: number
   replyCount: number
@@ -84,7 +84,7 @@ export default function DiscordWrapped() {
       try {
         const response = await fetch('/api/wrapped')
         const result = await response.json()
-        
+
         if (result.success && result.data) {
           setData(result.data)
           if (typeof result.data.year === 'number' || result.data.year === 'all') {
@@ -295,7 +295,7 @@ export default function DiscordWrapped() {
         <div className="text-center space-y-4 max-w-2xl">
           <h1 className="text-5xl font-black text-white">Something went wrong</h1>
           <p className="text-xl text-gray-400">{error || "Unknown error"}</p>
-          <button 
+          <button
             onClick={handleReupload}
             className="px-6 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-semibold"
           >

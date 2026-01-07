@@ -410,6 +410,7 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
   let targetYear: number | null = null
   let yearArr: any[] = []
 
+<<<<<<< Updated upstream
   try {
     yearArr = yearStats.toArray()
     availableYears = yearArr
@@ -436,6 +437,8 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
 
   if (targetYear !== null) {
     try {
+=======
+>>>>>>> Stashed changes
       const now = new Date()
       const currentYear = now.getFullYear()
       const currentMonth = now.getMonth()
@@ -551,65 +554,66 @@ async function runStatsQueries(
 
   // Top emojis
   const topEmojis = await conn.query(`
-      SELECT 
-        REGEXP_EXTRACT(Contents, '<a?:([^:]+):[0-9]+>', 1) as name,
-        COUNT(*) as count
+    WITH extracted AS (
+      SELECT UNNEST(regexp_extract_all(Contents, '<a?:[^:]+:[0-9]+>')) as full_emoji
       FROM messages
-      WHERE Contents LIKE '%<:%' OR Contents LIKE '%<a:%'
-      GROUP BY name
-      HAVING name IS NOT NULL AND name != ''
-      ORDER BY count DESC
-      LIMIT 10
-    `)
+    )
+    SELECT full_emoji, COUNT(*) as count
+    FROM extracted
+    GROUP BY full_emoji
+    ORDER BY count DESC
+    LIMIT 10
+  `)
 
   // Top words
   const topWords = await conn.query(`
-      WITH words AS (
-        SELECT UNNEST(STRING_SPLIT(LOWER(Contents), ' ')) as word
-        FROM messages
-        WHERE Contents IS NOT NULL
-      )
-      SELECT word, COUNT(*) as count
-      FROM words
-      WHERE LENGTH(word) > 4
-        AND word NOT IN ('https', 'http', 'the', 'and', 'for', 'are', 'with', 'that', 'this', 'from', 'have', 'been', 'were', 'their', 'would', 'there', 'could', 'about', 'just', 'like', 'what', 'when', 'make', 'time')
-        AND word NOT LIKE 'http%'
-      GROUP BY word
-      ORDER BY count DESC
-      LIMIT 20
-    `)
+    WITH words AS (
+      SELECT UNNEST(STRING_SPLIT(LOWER(Contents), ' ')) as word
+      FROM messages
+      WHERE Contents IS NOT NULL
+    )
+    SELECT word, COUNT(*) as count
+    FROM words
+    WHERE LENGTH(word) > 4
+      AND word NOT IN ('https', 'http', 'the', 'and', 'for', 'are', 'with', 'that', 'this', 'from', 'have', 'been', 'were', 'their', 'would', 'there', 'could', 'about', 'just', 'like', 'what', 'when', 'make', 'time')
+      AND word NOT LIKE 'http%'
+      AND NOT REGEXP_MATCHES(word, '^<a?:.+:[0-9]+>$')
+    GROUP BY word
+    ORDER BY count DESC
+    LIMIT 20
+  `)
 
   // Screaming
   const screamingCount = await conn.query(`
-      SELECT COUNT(*) as count FROM messages
-      WHERE Contents = UPPER(Contents) AND Contents != LOWER(Contents) AND LENGTH(Contents) > 3
-    `)
+    SELECT COUNT(*) as count FROM messages
+    WHERE Contents = UPPER(Contents) AND Contents != LOWER(Contents) AND LENGTH(Contents) > 3
+  `)
 
   // Questions
   const questionCount = await conn.query(`
-      SELECT COUNT(*) as count FROM messages WHERE Contents LIKE '%?%'
-    `)
+    SELECT COUNT(*) as count FROM messages WHERE Contents LIKE '%?%'
+  `)
 
   // Sentiment
   const positiveWords = await conn.query(`
-      SELECT COUNT(*) as count FROM messages
-      WHERE LOWER(Contents) LIKE '%lol%' OR LOWER(Contents) LIKE '%lmao%' OR LOWER(Contents) LIKE '%haha%'
-        OR LOWER(Contents) LIKE '%nice%' OR LOWER(Contents) LIKE '%awesome%' OR LOWER(Contents) LIKE '%love%'
-        OR LOWER(Contents) LIKE '%great%' OR LOWER(Contents) LIKE '%thanks%' OR LOWER(Contents) LIKE '%happy%'
-    `)
+    SELECT COUNT(*) as count FROM messages
+    WHERE LOWER(Contents) LIKE '%lol%' OR LOWER(Contents) LIKE '%lmao%' OR LOWER(Contents) LIKE '%haha%'
+      OR LOWER(Contents) LIKE '%nice%' OR LOWER(Contents) LIKE '%awesome%' OR LOWER(Contents) LIKE '%love%'
+      OR LOWER(Contents) LIKE '%great%' OR LOWER(Contents) LIKE '%thanks%' OR LOWER(Contents) LIKE '%happy%'
+  `)
 
   const negativeWords = await conn.query(`
-      SELECT COUNT(*) as count FROM messages
-      WHERE LOWER(Contents) LIKE '%hate%' OR LOWER(Contents) LIKE '%terrible%' OR LOWER(Contents) LIKE '%awful%'
-        OR LOWER(Contents) LIKE '%stupid%' OR LOWER(Contents) LIKE '%worst%' OR LOWER(Contents) LIKE '%angry%'
-    `)
+    SELECT COUNT(*) as count FROM messages
+    WHERE LOWER(Contents) LIKE '%hate%' OR LOWER(Contents) LIKE '%terrible%' OR LOWER(Contents) LIKE '%awful%'
+      OR LOWER(Contents) LIKE '%stupid%' OR LOWER(Contents) LIKE '%worst%' OR LOWER(Contents) LIKE '%angry%'
+  `)
 
   onProgress('Calculating streaks...', 97)
 
   // Daily activity for streak calculation
   const dailyActivity = await conn.query(`
-      SELECT DATE(Timestamp) as date FROM messages GROUP BY date ORDER BY date
-    `)
+    SELECT DATE(Timestamp) as date FROM messages GROUP BY date ORDER BY date
+  `)
 
   // Calculate streak
   let longestStreak = 0
@@ -636,40 +640,40 @@ async function runStatsQueries(
 
   // Night owl / Early bird
   const nightOwlCount = await conn.query(`
-      SELECT COUNT(*) as count FROM messages
-      WHERE EXTRACT(HOUR FROM Timestamp) >= 0 AND EXTRACT(HOUR FROM Timestamp) < 5
-    `)
+    SELECT COUNT(*) as count FROM messages
+    WHERE EXTRACT(HOUR FROM Timestamp) >= 0 AND EXTRACT(HOUR FROM Timestamp) < 5
+  `)
 
   const earlyBirdCount = await conn.query(`
-      SELECT COUNT(*) as count FROM messages
-      WHERE EXTRACT(HOUR FROM Timestamp) >= 5 AND EXTRACT(HOUR FROM Timestamp) < 9
-    `)
+    SELECT COUNT(*) as count FROM messages
+    WHERE EXTRACT(HOUR FROM Timestamp) >= 5 AND EXTRACT(HOUR FROM Timestamp) < 9
+  `)
 
   // Weekend
   const weekendCount = await conn.query(`
-      SELECT COUNT(*) as count FROM messages
-      WHERE DAYNAME(Timestamp) IN ('Saturday', 'Sunday')
-    `)
+    SELECT COUNT(*) as count FROM messages
+    WHERE DAYNAME(Timestamp) IN ('Saturday', 'Sunday')
+  `)
 
   // Busiest day
   const busiestDay = await conn.query(`
-      SELECT DATE(Timestamp) as date, COUNT(*) as count
-      FROM messages GROUP BY date ORDER BY count DESC LIMIT 1
-    `)
+    SELECT DATE(Timestamp) as date, COUNT(*) as count
+    FROM messages GROUP BY date ORDER BY count DESC LIMIT 1
+  `)
 
   // Most active month
   const mostActiveMonth = await conn.query(`
-      SELECT STRFTIME(Timestamp, '%Y-%m') as month, COUNT(*) as count
-      FROM messages GROUP BY month ORDER BY count DESC LIMIT 1
-    `)
+    SELECT STRFTIME(Timestamp, '%Y-%m') as month, COUNT(*) as count
+    FROM messages GROUP BY month ORDER BY count DESC LIMIT 1
+  `)
 
   // Burst sequences
   const burstCount = await conn.query(`
-      SELECT COUNT(*) as count FROM (
-        SELECT Timestamp, LAG(Timestamp) OVER (ORDER BY Timestamp) as prev_timestamp
-        FROM messages
-      ) WHERE EPOCH(Timestamp) - EPOCH(prev_timestamp) <= 30
-    `)
+    SELECT COUNT(*) as count FROM (
+      SELECT Timestamp, LAG(Timestamp) OVER (ORDER BY Timestamp) as prev_timestamp
+      FROM messages
+    ) WHERE EPOCH(Timestamp) - EPOCH(prev_timestamp) <= 30
+  `)
 
   // Links shared
   const linksShared = await conn.query(`SELECT COUNT(*) as count FROM messages WHERE Contents LIKE '%http%'`)
@@ -682,23 +686,23 @@ async function runStatsQueries(
 
   // Voice of reason
   const voiceOfReasonCount = await conn.query(`
-      SELECT COUNT(*) as count FROM messages
-      WHERE LOWER(Contents) LIKE '%actually%' OR LOWER(Contents) LIKE '%technically%'
-    `)
+    SELECT COUNT(*) as count FROM messages
+    WHERE LOWER(Contents) LIKE '%actually%' OR LOWER(Contents) LIKE '%technically%'
+  `)
 
   // Longest message
   const longestMessage = await conn.query(`
-      SELECT LENGTH(Contents) as length FROM messages WHERE Contents IS NOT NULL ORDER BY length DESC LIMIT 1
-    `)
+    SELECT LENGTH(Contents) as length FROM messages WHERE Contents IS NOT NULL ORDER BY length DESC LIMIT 1
+  `)
 
   // Conversation starters
   const conversationStarters = await conn.query(`
-      SELECT COUNT(*) as count FROM (
-        SELECT DATE(Timestamp) as date, ChannelName,
-          ROW_NUMBER() OVER (PARTITION BY DATE(Timestamp), ChannelName ORDER BY Timestamp) as rn
-        FROM messages
-      ) WHERE rn = 1
-    `)
+    SELECT COUNT(*) as count FROM (
+      SELECT DATE(Timestamp) as date, ChannelName,
+        ROW_NUMBER() OVER (PARTITION BY DATE(Timestamp), ChannelName ORDER BY Timestamp) as rn
+      FROM messages
+    ) WHERE rn = 1
+  `)
 
   onProgress('Finalizing...', 99)
 
@@ -756,7 +760,19 @@ async function runStatsQueries(
     dayOfWeekDistribution: {},
     monthlyDistribution: {},
     yearlyDistribution: {},
-    topEmojis: getArray(topEmojis, (e: any) => ({ name: e.name, id: '', count: Number(e.count) })),
+    topEmojis: getArray(topEmojis, (e: any) => {
+      // Parse full emoji tag: <a:name:id> or <:name:id>
+      const match = String(e.full_emoji).match(/<(a?):([^:]+):([0-9]+)>/)
+      if (match) {
+        return {
+          name: match[2],
+          id: match[3],
+          isAnimated: match[1] === 'a',
+          count: Number(e.count)
+        }
+      }
+      return { name: String(e.full_emoji), id: '', count: Number(e.count) }
+    }),
     topWords: getArray(topWords, (w: any) => ({ word: w.word, count: Number(w.count) })),
     screamingCount: getVal(screamingCount, 'count'),
     questionCount: getVal(questionCount, 'count'),

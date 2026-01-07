@@ -20,7 +20,7 @@ interface DiscordData {
   avgWordsPerMessage: number
   topChannels: Array<{ name: string; count: number }>
   topWords: Array<{ word: string; count: number }>
-  topEmojis: Array<{ name: string; id: string; count: number }>
+  topEmojis: Array<{ name: string; id: string; count: number; isAnimated?: boolean }>
   screamingCount: number
   questionCount: number
   replyCount: number
@@ -72,6 +72,30 @@ function compactNumber(num: number): string {
   if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`
   if (num >= 1000) return `${(num / 1000).toFixed(1)}K`
   return num.toLocaleString()
+}
+
+// Helper component to render Discord custom emojis
+function DiscordEmoji({ name, id, isAnimated, size = 24 }: { name: string; id: string; isAnimated?: boolean; size?: number }) {
+  // If no ID, it's a standard emoji or invalid - just show the name
+  if (!id) {
+    return <span>:{name}:</span>
+  }
+
+  const extension = isAnimated ? 'gif' : 'webp'
+  const cdnUrl = `https://cdn.discordapp.com/emojis/${id}.${extension}?size=${size >= 48 ? 96 : 48}&quality=lossless`
+
+  return (
+    <img
+      src={cdnUrl}
+      alt={`:${name}:`}
+      title={`:${name}:`}
+      width={size}
+      height={size}
+      className="inline-block object-contain"
+      style={{ width: size, height: size }}
+      loading="lazy"
+    />
+  )
 }
 
 function createSlides(data: DiscordData) {
@@ -513,6 +537,8 @@ function createSlides(data: DiscordData) {
       daysActive: data.daysActive,
       topChannel: data.topChannels[0]?.name || "Unknown",
       topEmoji: data.topEmojis[0]?.name || null,
+      topEmojiId: data.topEmojis[0]?.id || null,
+      topEmojiAnimated: data.topEmojis[0]?.isAnimated || false,
       topWord: data.topWords[0]?.word || null,
       peakHour: data.peakHour,
       longestStreak: data.longestStreak,
@@ -695,23 +721,40 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                     <h2 className="text-3xl md:text-4xl font-bold text-white">{slide.title}</h2>
                   </motion.div>
                   <div className="space-y-3">
-                    {slide.data?.map((item: any, index: number) => (
-                      <motion.div
-                        key={index}
-                        initial={{ x: -30, opacity: 0 }}
-                        animate={{ x: 0, opacity: 1 }}
-                        transition={{ delay: index * 0.1 + 0.2 }}
-                        className="flex items-center justify-between p-4 rounded-xl bg-black/40 border border-red-900/20 hover:border-red-500/40 transition-colors"
-                      >
-                        <div className="flex items-center gap-4 flex-1 min-w-0">
-                          <span className="text-2xl font-black text-red-500 w-8">#{index + 1}</span>
-                          <span className="text-xl font-medium text-white leading-tight break-words whitespace-normal">
-                            {item.name || item.word}
-                          </span>
-                        </div>
-                        <span className="text-lg font-bold text-red-400 whitespace-nowrap">{compactNumber(item.count)}</span>
-                      </motion.div>
-                    ))}
+                    {slide.data?.map((item: any, index: number) => {
+                      // Check if this is an emoji item (has id property)
+                      const isEmojiItem = 'id' in item && 'name' in item && !('word' in item)
+
+                      return (
+                        <motion.div
+                          key={index}
+                          initial={{ x: -30, opacity: 0 }}
+                          animate={{ x: 0, opacity: 1 }}
+                          transition={{ delay: index * 0.1 + 0.2 }}
+                          className="flex items-center justify-between p-4 rounded-xl bg-black/40 border border-red-900/20 hover:border-red-500/40 transition-colors"
+                        >
+                          <div className="flex items-center gap-4 flex-1 min-w-0">
+                            <span className="text-2xl font-black text-red-500 w-8">#{index + 1}</span>
+                            {isEmojiItem && item.id ? (
+                              <div className="flex items-center gap-3">
+                                <DiscordEmoji
+                                  name={item.name}
+                                  id={item.id}
+                                  isAnimated={item.isAnimated}
+                                  size={32}
+                                />
+                                <span className="text-lg font-medium text-gray-400">:{item.name}:</span>
+                              </div>
+                            ) : (
+                              <span className="text-xl font-medium text-white leading-tight break-words whitespace-normal">
+                                {item.name || item.word}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-lg font-bold text-red-400 whitespace-nowrap">{compactNumber(item.count)}</span>
+                        </motion.div>
+                      )
+                    })}
                   </div>
                   <motion.p
                     initial={{ opacity: 0 }}
@@ -899,7 +942,17 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                         className="bg-black/40 rounded-xl p-4 border border-red-900/20 flex flex-col gap-1"
                       >
                         <span className="text-gray-400 text-xs">Signature Emote</span>
-                        <span className="text-white font-bold text-sm">:{slide.stats.topEmoji}:</span>
+                        <div className="flex items-center gap-2">
+                          {slide.stats.topEmojiId ? (
+                            <DiscordEmoji
+                              name={slide.stats.topEmoji}
+                              id={slide.stats.topEmojiId}
+                              isAnimated={slide.stats.topEmojiAnimated}
+                              size={24}
+                            />
+                          ) : null}
+                          <span className="text-white font-bold text-sm">:{slide.stats.topEmoji}:</span>
+                        </div>
                       </motion.div>
                     )}
 
