@@ -1,187 +1,127 @@
-# Discord Wrapped 2025
-
-A Spotify Wrapped-style visualization for your Discord activity! See your messaging stats, favorite channels, top emojis, and more in a beautiful, animated presentation.
-
-## 🎉 Features
-
-- **20+ Statistics**: Messages sent, words typed, days active, longest streak, and more
-- **Beautiful Animations**: Smooth transitions and dynamic visualizations
-- **Spotify-Style Design**: Familiar wrapped experience with Discord theming
-- **Yearly Wrapped**: Filtered to show only 2025 activity
-- **Summary Card**: All your key stats in one final recap
-
-## 📊 Stats Included
-
-- Total messages & words
-- Days active & longest streak
-- Peak activity hour & busiest day
-- Top channels, emojis, and words
-- Night owl vs early bird analysis
-- Sentiment analysis (positive vibes %)
-- Conversation starters, hype energy, and more!
-
-## 🚀 Quick Start
-
-### For Personal Use
-
-1. **Get Your Discord Data**
-   - Go to Discord Settings → Privacy & Safety
-   - Click "Request Data"
-   - Wait for Discord to email you (takes 24-48 hours)
-   - Download the ZIP file
-
-2. **Clone & Install**
-   ```bash
-   git clone <your-repo>
-   cd discord-wrapped
-   npm install
-   ```
-
-3. **Extract Your Data**
-   - Unzip your Discord data package
-   - Copy the `messages` folder to the project root (rename to `Messages`)
-
-4. **Process Your Data**
-   ```bash
-   npm run convert:parquet
-   ```
-
-5. **Run the App**
-   ```bash
-   npm run dev
-   ```
-
-6. **View Your Wrapped**
-   - Open http://localhost:3000
-   - Use arrow keys or click to navigate slides
-
-## 🌐 Deploying to Vercel (For Others to Use)
-
-**Important:** Don't commit your Discord data! Here's how to deploy safely:
-
-### Quick Deploy Steps
-
-1. **Clean Your Repo**
-   ```bash
-   # The .gitignore already excludes data folders
-   git status  # Should NOT show Messages/, Account/, etc.
-   ```
-
-2. **Push to GitHub**
-   ```bash
-   git add .
-   git commit -m "Deploy Discord Wrapped"
-   git push origin main
-   ```
-
-3. **Deploy on Vercel**
-   - Go to [vercel.com](https://vercel.com)
-   - Import your GitHub repo
-   - Click Deploy
-   - Done! ✨
-
-### What Gets Deployed
-
-- ✅ App code (~10MB)
-- ✅ Dependencies
-- ❌ Your Discord data (gitignored)
-- ❌ Parquet files (gitignored)
-
-### For Public Use
-
-The deployed app will be empty (no data). To make it work for others, you'd need to add:
-
-1. **File upload feature** - Let users upload their Discord data ZIP
-2. **Client-side processing** - Use DuckDB-WASM to process in browser
-3. **No server storage** - Everything stays on user's device
-
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed instructions.
-
-## 🛠️ Tech Stack
-
-- **Next.js 16** - React framework
-- **DuckDB** - Fast SQL analytics on Parquet files
-- **Framer Motion** - Smooth animations
-- **Tailwind CSS** - Styling
-- **TypeScript** - Type safety
-
-## 📁 Project Structure
-
-```
 discord-wrapped/
-├── app/                    # Next.js app directory
-│   ├── api/wrapped/       # API route for stats
-│   └── page.tsx           # Main page
-├── components/            # React components
-│   └── wrapped-slides.tsx # Slide presentation
-├── lib/                   # Utilities
-│   └── db.ts             # DuckDB queries
-├── scripts/              # Data processing
-│   └── process-discord-data.js
-└── Messages/             # Your Discord data (gitignored)
-    └── all_messages.parquet
+# Discord Wrapped
+
+A Spotify‑inspired, fully client-side recap of your Discord activity. Upload the ZIP that Discord emails you, let the app crunch the numbers right in your browser, then pick the year you want to relive through an animated slide deck.
+
+## ✨ Highlight Reel
+
+- **Automatic year detection** – upload once, then choose any detected year without reprocessing on the server.
+- **20+ rich metrics** – total messages, words, streaks, peak activity windows, hype energy, sentiment cues, and more.
+- **Channel + DM insights** – friendly names for servers, channels, and direct messages.
+- **Beautiful presentation** – Framer Motion powered slides, Spotify Wrapped vibe, responsive design.
+- **100% client-side** – DuckDB WASM runs in-browser; your ZIP never leaves your device.
+
+## 📈 Stats At A Glance
+
+- Total messages, words, characters
+- Active days, longest streak, busiest day & hour
+- Top channels, words, emojis, links, mentions
+- Night owl vs early bird, weekend warrior breakdown
+- Sentiment heuristics, conversation starters, hype energy
+- Burst sequences, longest message, ghosting days, much more
+
+## 🚀 Getting Started
+
+### 1. Request your Discord archive
+
+1. Open **Discord → Settings → Privacy & Safety**
+2. Scroll to **Request all of my Data**
+3. Wait for the email (can take up to two weeks)
+4. Download the provided ZIP (do **not** unzip)
+
+### 2. Run the app locally
+
+```bash
+git clone <your-repo>
+cd discord-wrapped
+pnpm install      # or npm install / yarn install
+pnpm dev          # starts Next.js on http://localhost:3000
 ```
 
-## 🔒 Privacy
+Visit the site, drop the Discord ZIP into the uploader, then pick the year you want to see. The worker keeps the file around so you can swap years instantly.
 
-- All processing happens locally on your machine
-- No data is sent to external servers
-- Your Discord data is gitignored by default
-- Safe to deploy without exposing personal information
+### Optional: pre-convert for advanced workflows
 
-## 🎨 Customization
+If you want an optimized Parquet copy of your archive (for experimentation or faster repeat loads), unzip the archive, place the `messages` folders under `Messages/`, then run:
 
-### Change the Year Filter
-
-Edit `lib/db.ts`:
-```typescript
-WHERE Timestamp >= '2025-01-01' AND Timestamp < '2026-01-01'
+```bash
+pnpm run convert:parquet
 ```
 
-### Modify Stats
+This step is **not** required for normal usage.
 
-Add new stats in `lib/db.ts` → `getWrappedStats()`
+## 🌐 Deploying (Vercel example)
 
-### Customize Slides
+1. Ensure your repo is clean (Discord archives are gitignored):
+   ```bash
+   git status
+   ```
+2. Push to GitHub.
+3. Import the repo in [Vercel](https://vercel.com) and deploy.
 
-Edit `components/wrapped-slides.tsx` → `createSlides()`
+The live app ships without data; every visitor uploads their own ZIP and processes it locally.
 
-## 🐛 Troubleshooting
+## 🧱 Project Structure
 
-### "No data found"
-- Make sure you ran `npm run convert:parquet`
-- Check that `Messages/all_messages.parquet` exists
+```
 
-### "Module not found: duckdb"
-- Run `npm install`
-- Check `next.config.mjs` has proper externals
+├── app/
+│   ├── layout.tsx           # Root layout & metadata
+│   └── page.tsx             # Upload flow, year selector, slides
+├── components/
+│   ├── upload-screen.tsx    # ZIP uploader
+│   ├── year-selector.tsx    # Post-upload year picker
+│   └── wrapped-slides.tsx   # Animated recap deck
+├── lib/
+│   ├── client-db.ts         # Browser worker bootstrapper
+│   ├── worker.ts            # DuckDB WASM processing & stats
+│   └── utils.ts             # UI helpers
+├── scripts/
+│   └── convert-to-parquet.js# Optional offline preprocessing
+└── public/, styles/, etc.
+```
 
-### "Build failed on Vercel"
-- Remove all Discord data folders before deploying
-- Check `.gitignore` is working: `git ls-files | grep Messages`
+## 🧠 Tech Stack
 
-### "Deployment too large"
-- Your data files might be committed
-- Run: `git rm -r --cached Messages/ Account/ Activities/`
-- Commit and push again
+- **Next.js 16** + React 19
+- **DuckDB WASM** for in-browser analytics
+- **Framer Motion** for slide animations
+- **Tailwind CSS** + shadcn/ui components
+- **TypeScript** end-to-end
 
-## 📝 License
+## 🔒 Privacy Promise
 
-MIT License - feel free to use and modify!
+- The ZIP never leaves the browser – no backend storage.
+- Git ignores `Messages/`, `Account/`, and other archive folders by default.
+- Safe to deploy publicly; every visitor processes their own data locally.
 
-## 🙏 Credits
+## 🛠️ Customization Hooks
 
-Inspired by Spotify Wrapped and built with love for the Discord community.
+- **Slides:** tweak or add sections in `components/wrapped-slides.tsx` (`createSlides`).
+- **Stats:** extend the queries in `lib/worker.ts` → `runStatsQueries`.
+- **Styling:** edit Tailwind tokens in `styles/globals.css` or swap fonts via `app/layout.tsx`.
+
+## 🐞 Troubleshooting
+
+| Issue | Fix |
+| --- | --- |
+| Upload rejected | The file must be the untouched ZIP from Discord. |
+| “No messages found for year …” | That year may be absent in the archive; pick another from the list. |
+| Slow processing | Large archives run entirely client-side; keep the tab focused and wait—it can take several minutes for multi-year histories. |
+| Hydration warning about layout | Ensure you’re running the latest code (layout now sets stable font classes). |
 
 ## 🤝 Contributing
 
-Contributions welcome! Some ideas:
-- Client-side file upload and processing
-- More statistics and visualizations
-- Export as image/video
-- Multi-year comparison
-- Server-specific wrapped
+Ideas welcome! Some impactful areas:
 
-## ⚠️ Disclaimer
+1. Additional visualizations or comparisons (e.g., multi-year views)
+2. Export/share flows (PNG, MP4, social summaries)
+3. Accessibility & localization improvements
+4. Performance optimizations for very large archives
 
-This is an unofficial tool and is not affiliated with Discord Inc. Use at your own risk. Always respect Discord's Terms of Service and API usage guidelines.
+Fork, branch, and open a PR – just keep personal Discord data out of the repo.
+
+## ⚖️ License & Disclaimer
+
+Released under the MIT License. This project is unofficial and not affiliated with Discord Inc. Use responsibly and respect Discord’s Terms of Service.
+- All processing happens locally on your machine

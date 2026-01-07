@@ -687,13 +687,13 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                         transition={{ delay: index * 0.1 + 0.2 }}
                         className="flex items-center justify-between p-4 rounded-xl bg-black/40 border border-red-900/20 hover:border-red-500/40 transition-colors"
                       >
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-4 flex-1 min-w-0">
                           <span className="text-2xl font-black text-red-500 w-8">#{index + 1}</span>
-                          <span className="text-xl font-medium text-white truncate max-w-[200px] md:max-w-[300px]">
+                          <span className="text-xl font-medium text-white leading-tight break-words whitespace-normal">
                             {item.name || item.word}
                           </span>
                         </div>
-                        <span className="text-lg font-bold text-red-400">{compactNumber(item.count)}</span>
+                        <span className="text-lg font-bold text-red-400 whitespace-nowrap">{compactNumber(item.count)}</span>
                       </motion.div>
                     ))}
                   </div>
