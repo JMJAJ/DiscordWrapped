@@ -163,7 +163,24 @@ async function processAndAnalyze(file: File): Promise<any> {
   let targetYear = new Date().getFullYear()
   try {
     const yearArr = yearStats.toArray()
-    if (yearArr.length > 0) targetYear = Number(yearArr[0].y)
+    if (yearArr.length > 0) {
+      targetYear = Number(yearArr[0].y)
+
+      // Smart Check: If the latest year is the current calendar year,
+      // but we're still in January or February, the user likely wants 
+      // the previous full year's wrapped, not a wrapped for the last few days.
+      const now = new Date()
+      const currentYear = now.getFullYear()
+      const currentMonth = now.getMonth() // 0 = January
+
+      if (targetYear === currentYear && currentMonth < 2 && yearArr.length > 1) {
+        // Check if the next year in the list is actually the previous year
+        const prevYear = Number(yearArr[1].y)
+        if (prevYear === targetYear - 1) {
+          targetYear = prevYear
+        }
+      }
+    }
   } catch (e) { console.warn("Year detection failed", e) }
 
   postProgress(`Filtering for ${targetYear}...`, 90)
