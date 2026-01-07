@@ -232,6 +232,20 @@ function createSlides(data: DiscordData) {
     })
   }
 
+  const safeFormatDate = (dateInput: string | null) => {
+    if (!dateInput) return "Unknown Date"
+
+    if (/^\d+$/.test(dateInput)) {
+      const date = new Date(parseInt(dateInput))
+      return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    }
+
+    const date = new Date(dateInput)
+    return isNaN(date.getTime())
+      ? dateInput
+      : date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  }
+
   // Busiest day
   if (data.busiestDay) {
     const busyStat = formatStat(data.busiestDayCount)
@@ -242,7 +256,7 @@ function createSlides(data: DiscordData) {
       stat: busyStat.value,
       statSize: busyStat.size,
       label: "Messages on Your Wildest Day",
-      description: `${data.busiestDay} was absolutely insane!`,
+      description: `${safeFormatDate(data.busiestDay)} was absolutely insane!`,
       funFact: data.busiestDayCount > 500 ? "Did you even sleep?" : null,
     })
   }
@@ -465,8 +479,12 @@ function createSlides(data: DiscordData) {
   // Format busiest day nicely
   const formatBusiestDay = (dateStr: string | null) => {
     if (!dateStr) return null
+    if (/^\d+$/.test(dateStr)) {
+      const date = new Date(parseInt(dateStr))
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    }
     const date = new Date(dateStr)
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    return isNaN(date.getTime()) ? dateStr : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
   slides.push({
