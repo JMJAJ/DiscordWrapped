@@ -1,4 +1,3 @@
-discord-wrapped/
 # Discord Wrapped
 
 A Spotify‑inspired, fully client-side recap of your Discord activity. Upload the ZIP that Discord emails you, let the app crunch the numbers right in your browser, then pick the year you want to relive through an animated slide deck.
@@ -114,10 +113,9 @@ The live app ships without data; every visitor uploads their own ZIP and process
 
 Ideas welcome! Some impactful areas:
 
-1. Additional visualizations or comparisons (e.g., multi-year views)
-2. Export/share flows (PNG, MP4, social summaries)
-3. Accessibility & localization improvements
-4. Performance optimizations for very large archives
+1. Export/share flows (PNG, MP4, social summaries)
+2. Accessibility & localization improvements
+3. Performance optimizations for very large archives
 
 Fork, branch, and open a PR – just keep personal Discord data out of the repo.
 

@@ -5,8 +5,8 @@ import { Card } from "@/components/ui/card"
 
 interface YearSelectorProps {
   years: number[]
-  selectedYear: number | null
-  onSelect: (year: number) => void
+  selectedYear: number | 'all' | null
+  onSelect: (year: number | 'all') => void
   onContinue: () => void
   onReupload?: () => void
 }
@@ -63,10 +63,21 @@ export function YearSelector({ years, selectedYear, onSelect, onContinue, onReup
                     </button>
                   )
                 })}
+                <button
+                  type="button"
+                  onClick={() => onSelect('all')}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition
+                    ${selectedYear === 'all'
+                      ? 'bg-red-600 text-white shadow-[0_0_25px_rgba(239,68,68,0.45)]'
+                      : 'bg-zinc-900/70 text-gray-200 hover:bg-red-900/30 hover:text-white'}
+                  `}
+                >
+                  All Time
+                </button>
               </div>
             </div>
             <p className="text-xs text-gray-500">
-              For long histories, scroll sideways to pick older years. You can always come back to try another.
+              For long histories, scroll to pick older years or jump straight into All Time. You can always come back to try another range.
             </p>
           </Card>
 

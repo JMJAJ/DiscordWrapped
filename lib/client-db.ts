@@ -1,7 +1,7 @@
 "use client"
 
 interface ProcessOptions {
-  year?: number
+  year?: number | 'all'
 }
 
 export async function processAndAnalyze(
