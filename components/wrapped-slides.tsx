@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronRight, ChevronLeft } from "lucide-react"
+import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 
@@ -104,13 +104,6 @@ function createSlides(data: DiscordData) {
   const fallbackYear = data.availableYears?.[0] ?? new Date().getFullYear()
   const numericYear = typeof data.year === 'number' ? data.year : fallbackYear
   const yearLabel = isAllTime ? 'All-Time' : `${numericYear}`
-
-  const {
-    MessageSquare, Calendar, Clock, Zap,
-    Heart, Smile, Target, Moon, Sun,
-    Coffee, Link, AtSign, Megaphone, Sparkles,
-    Ghost, MessageCircle, BarChart3, Award, Flame
-  } = require("lucide-react")
 
   // Intro with year
   slides.push({
@@ -565,28 +558,42 @@ function createSlides(data: DiscordData) {
 export function WrappedSlides({ data }: { data: DiscordData }) {
   const [currentSlide, setCurrentSlide] = useState(0)
   const [direction, setDirection] = useState(0)
-  const slides = createSlides(data)
+  const slides = useMemo(() => createSlides(data), [data])
+  const slideCountRef = useRef(slides.length)
+  const currentSlideRef = useRef(currentSlide)
 
-  // Keyboard navigation
+  useEffect(() => {
+    slideCountRef.current = slides.length
+  }, [slides.length])
+
+  useEffect(() => {
+    currentSlideRef.current = currentSlide
+  }, [currentSlide])
+
+  // Keyboard navigation with stable listener to avoid re-subscribing on each slide change
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const total = slideCountRef.current
+      const active = currentSlideRef.current
+
       if (e.key === "ArrowRight" || e.key === " ") {
         e.preventDefault()
-        if (currentSlide < slides.length - 1) {
+        if (active < total - 1) {
           setDirection(1)
           setCurrentSlide(prev => prev + 1)
         }
       } else if (e.key === "ArrowLeft") {
         e.preventDefault()
-        if (currentSlide > 0) {
+        if (active > 0) {
           setDirection(-1)
           setCurrentSlide(prev => prev - 1)
         }
       }
     }
+
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [currentSlide, slides.length])
+  }, [])
 
   const nextSlide = () => {
     if (currentSlide < slides.length - 1) {
