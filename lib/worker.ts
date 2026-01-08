@@ -94,6 +94,23 @@ function normalizeTimestamp(raw: unknown): string | null {
   return parsed.toISOString()
 }
 
+function escapeLiteral(value: string) {
+  return value.replace(/'/g, "''")
+}
+
+async function insertBatch(
+  conn: duckdb.AsyncDuckDBConnection,
+  rows: Array<[string, string, string, string, string]>
+) {
+  if (!rows.length) return
+
+  const values = rows.map(([id, ts, contents, attachments, channel]) =>
+    `('${escapeLiteral(id)}','${escapeLiteral(ts)}','${escapeLiteral(contents)}','${escapeLiteral(attachments)}','${escapeLiteral(channel)}')`
+  ).join(',')
+
+  await conn.query(`INSERT INTO messages VALUES ${values}`)
+}
+
 interface WorkerRequest {
   file: File
   targetYear?: number | 'all' | null
@@ -140,6 +157,8 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
         ChannelName VARCHAR
       )
     `)
+  // Use a couple threads in wasm build for better parallelism within limits
+  // Do not set threads in this build; wasm bundle may be single-threaded
 
   // 3. Load ZIP
   postProgress('Reading ZIP file...', 10)
@@ -244,8 +263,12 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
   // 5. Stream Process Files
   let processedFiles = 0
   let totalMessagesInserted = 0
-  let rowBuffer: string[] = []
-  const BATCH_SIZE = 2000
+  const yearCounts: Record<number, number> = {}
+  let rowBuffer: Array<[string, string, string, string, string]> = []
+  let rowBufferCharEstimate = 0
+  const BATCH_SIZE = 8000 // slightly larger batches to reduce round trips
+  const MAX_BUFFER_CHARS = 8_000_000 // guard against huge SQL strings in wasm
+  const alreadyFilteredByYear = typeof explicitYear === 'number'
 
   for (const filePath of messageFiles) {
     try {
@@ -357,13 +380,23 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
         const ts = normalizeTimestamp(rawTimestamp)
         if (!ts) continue
 
-        const timestamp = ts.replace(/'/g, "''")
-        const id = String(m.ID ?? m.id ?? '').replace(/'/g, "''")
-        const contents = String(m.Contents ?? m.contents ?? '').replace(/'/g, "''")
-        const attachments = String(m.Attachments ?? m.attachments ?? '').replace(/'/g, "''")
+        const year = Number(ts.slice(0, 4))
+        if (Number.isFinite(year)) {
+          yearCounts[year] = (yearCounts[year] ?? 0) + 1
+        }
+
+        if (typeof explicitYear === 'number' && year !== explicitYear) {
+          continue
+        }
+
+        const id = String(m.ID ?? m.id ?? '')
+        const contents = String(m.Contents ?? m.contents ?? '')
+        // Attachments are unused in downstream stats; drop to shrink inserts
+        const attachments = ''
         const cName = safeChannelName
 
-        rowBuffer.push(`('${id}', '${timestamp}', '${contents}', '${attachments}', '${cName}')`)
+        rowBuffer.push([id, ts, contents, attachments, cName])
+        rowBufferCharEstimate += id.length + ts.length + contents.length + attachments.length + cName.length + 10 // small overhead
         insertedFromFile++
       }
 
@@ -372,10 +405,10 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
       console.warn(`Failed to process ${filePath}`, e)
     }
 
-    if (rowBuffer.length >= BATCH_SIZE) {
-      const values = rowBuffer.join(',')
-      await conn.query(`INSERT INTO messages VALUES ${values}`)
+    if (rowBuffer.length >= BATCH_SIZE || rowBufferCharEstimate >= MAX_BUFFER_CHARS) {
+      await insertBatch(conn, rowBuffer)
       rowBuffer = []
+      rowBufferCharEstimate = 0
     }
 
     processedFiles++
@@ -386,72 +419,71 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
   }
 
   if (rowBuffer.length > 0) {
-    const values = rowBuffer.join(',')
-    await conn.query(`INSERT INTO messages VALUES ${values}`)
+    await insertBatch(conn, rowBuffer)
     rowBuffer = []
+    rowBufferCharEstimate = 0
   }
 
   if (totalMessagesInserted === 0) {
     throw new Error("No messages found in your Discord data.")
   }
 
+  if (alreadyFilteredByYear && typeof explicitYear === 'number') {
+    postProgress(`Filtered for ${explicitYear} during ingest...`, 87)
+  }
+
   postProgress('Identifying active year...', 88)
 
-  const yearStats = await conn.query(`
-      SELECT EXTRACT(YEAR FROM Timestamp) as y, COUNT(*) as c
-      FROM messages 
-      WHERE Timestamp IS NOT NULL
-      GROUP BY y
-      ORDER BY y DESC
-    `)
-
   const isAllTimeRequest = explicitYear === 'all'
-  let availableYears: number[] = []
+  const availableYears = Object.keys(yearCounts)
+    .map(Number)
+    .filter((year) => Number.isFinite(year))
+    .sort((a, b) => b - a)
+
+  if (!availableYears.length) {
+    throw new Error('No messages found in your Discord data.')
+  }
+
+  const sortedYearCounts = availableYears
+    .map((year) => ({ year, count: yearCounts[year] ?? 0 }))
+    .sort((a, b) => b.year - a.year)
+
   let targetYear: number | null = null
-  let yearArr: any[] = []
 
-  try {
-    yearArr = yearStats.toArray()
-    availableYears = yearArr
-      .map((row: any) => Number(row.y))
-      .filter((year: number) => Number.isFinite(year))
-
-    if (!isAllTimeRequest) {
-      if (typeof explicitYear === 'number') {
-        if (availableYears.includes(explicitYear)) {
-          targetYear = explicitYear
-        } else {
-          const list = availableYears.length ? ` Available years: ${availableYears.join(', ')}` : ''
-          throw new Error(`No messages found for year ${explicitYear}.${list}`)
-        }
-      } else if (availableYears.length > 0) {
-        const preferredYear = 2025
-        targetYear = availableYears.includes(preferredYear) ? preferredYear : availableYears[0]
+  if (!isAllTimeRequest) {
+    if (typeof explicitYear === 'number') {
+      if (availableYears.includes(explicitYear)) {
+        targetYear = explicitYear
+      } else {
+        const list = availableYears.length ? ` Available years: ${availableYears.join(', ')}` : ''
+        throw new Error(`No messages found for year ${explicitYear}.${list}`)
       }
-    }
-  } catch (e) {
-    if (typeof explicitYear === 'number') throw e
-    console.warn('Year detection failed', e)
-  }
+    } else if (sortedYearCounts.length > 0) {
+      const preferredYear = 2025
+      targetYear = availableYears.includes(preferredYear) ? preferredYear : sortedYearCounts[0].year
 
-  if (targetYear !== null) {
-    try {
-      const now = new Date()
-      const currentYear = now.getFullYear()
-      const currentMonth = now.getMonth()
-
-      if (targetYear === currentYear && currentMonth < 2 && yearArr.length > 1) {
-        const prevYear = Number(yearArr[1].y)
-        if (Number.isFinite(prevYear) && prevYear === targetYear - 1) {
-          targetYear = prevYear
+      try {
+        const now = new Date()
+        const targetYearNumber = targetYear
+        if (typeof targetYearNumber === 'number' && targetYearNumber === now.getFullYear() && now.getMonth() < 2 && sortedYearCounts.length > 1) {
+          const prev = sortedYearCounts.find((entry) => entry.year === targetYearNumber - 1)
+          if (prev) {
+            targetYear = prev.year
+          }
         }
+      } catch (e) {
+        console.warn('Smart year fallback failed', e)
       }
-    } catch (e) {
-      console.warn('Smart year fallback failed', e)
     }
   }
 
-  if (targetYear !== null) {
+  const needsPostFilter =
+    targetYear !== null &&
+    !isAllTimeRequest &&
+    !alreadyFilteredByYear &&
+    availableYears.length > 1
+
+  if (needsPostFilter) {
     postProgress(`Filtering for ${targetYear}...`, 90)
     await conn.query(`DELETE FROM messages WHERE EXTRACT(YEAR FROM Timestamp) != ${targetYear}`)
   } else {
