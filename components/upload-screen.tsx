@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react"
 import { motion } from "framer-motion"
-import { Upload, FileArchive, Loader2, AlertCircle, CheckCircle2 } from "lucide-react"
+import { Upload, FileArchive, Loader2, AlertCircle, CheckCircle2, Github } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { processAndAnalyze } from "@/lib/client-db"
 
@@ -215,6 +215,18 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
               <li>Download the ZIP file and upload it here</li>
             </ol>
           </Card>
+
+          <div className="text-center">
+            <a
+              href="https://github.com/JMJAJ/DiscordWrapped"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-red-500/50 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-600/80"
+            >
+              <Github className="h-4 w-4" />
+              View Source on GitHub
+            </a>
+          </div>
 
           <p className="text-xs text-gray-500 text-center">
             Your data is processed entirely in your browser.<br />
