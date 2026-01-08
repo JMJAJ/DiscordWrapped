@@ -31,7 +31,7 @@ A Spotify‑inspired, fully client-side recap of your Discord activity. Upload t
 ### 2. Run the app locally
 
 ```bash
-git clone <your-repo>
+git clone https://github.com/JMJAJ/DiscordWrapped.git
 cd discord-wrapped
 pnpm install      # or npm install / yarn install
 pnpm dev          # starts Next.js on http://localhost:3000
