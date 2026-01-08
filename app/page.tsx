@@ -264,7 +264,7 @@ export default function DiscordWrapped() {
     return (
       <div className="relative">
         <div className="absolute top-4 right-4 z-50 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <span className="rounded-full border border-zinc-700/60 bg-black/60 px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-gray-200">
+          <span className="rounded-full border border-zinc-700/60 bg-black/60 px-4 py-2 text-xs sm:text-sm font-medium text-gray-200">
             {rangeLabel}
           </span>
           <button
