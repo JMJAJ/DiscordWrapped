@@ -105,11 +105,24 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
   }
 
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center p-4">
+    <div className="relative min-h-screen bg-black flex items-center justify-center p-4">
       {/* Background effects */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute top-20 left-10 w-72 h-72 bg-red-600/10 rounded-full blur-3xl" />
         <div className="absolute bottom-20 right-10 w-96 h-96 bg-red-800/10 rounded-full blur-3xl" />
+      </div>
+
+      <div className="absolute top-6 right-6 z-20">
+        <a
+          href="https://github.com/JMJAJ/DiscordWrapped"
+          target="_blank"
+          rel="noreferrer noopener"
+          title="View Source on GitHub"
+          aria-label="View source on GitHub"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-red-500/50 bg-black/70 text-white shadow-lg transition hover:bg-red-600/80"
+        >
+          <Github className="h-5 w-5" />
+        </a>
       </div>
 
       <motion.div
@@ -215,18 +228,6 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
               <li>Download the ZIP file and upload it here</li>
             </ol>
           </Card>
-
-          <div className="text-center">
-            <a
-              href="https://github.com/JMJAJ/DiscordWrapped"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="inline-flex items-center justify-center gap-2 rounded-full border border-red-500/50 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-600/80"
-            >
-              <Github className="h-4 w-4" />
-              View Source on GitHub
-            </a>
-          </div>
 
           <p className="text-xs text-gray-500 text-center">
             Your data is processed entirely in your browser.<br />
