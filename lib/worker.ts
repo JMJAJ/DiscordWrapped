@@ -144,8 +144,87 @@ const NUMERIC_CHANNEL_TYPES: Record<number, string> = {
 }
 
 interface WorkerRequest {
+  action?: 'scan' | 'process'
   file: File
   targetYear?: number | 'all' | null
+  sources?: Partial<Sources>
+}
+
+// Optional parts of the export the user can leave out (messages are always read)
+interface Sources {
+  activity: boolean // voice, reactions, edits, commands, app opens
+  games: boolean    // play time per game
+  money: boolean    // payments, Orbs, Quests
+}
+
+const normalizeSources = (raw?: Partial<Sources> | null): Sources => ({
+  activity: raw?.activity !== false,
+  games: raw?.games !== false,
+  money: raw?.money !== false,
+})
+
+const fileKey = (file: File) => `${file.name}:${file.size}:${file.lastModified}`
+
+// The opened ZIP is kept between the scan and the import that follows it, then dropped
+let zipCache: { key: string; contents: JSZip } | null = null
+
+async function openArchive(file: File): Promise<JSZip> {
+  const key = fileKey(file)
+  if (zipCache && zipCache.key === key) return zipCache.contents
+  zipCache = null
+  postProgress('Reading ZIP file...', 10)
+  const contents = await new JSZip().loadAsync(file)
+  zipCache = { key, contents }
+  return contents
+}
+
+const entrySize = (entry: JSZip.JSZipObject): number => Number((entry as any)?._data?.uncompressedSize) || 0
+// Multi-GB entries can carry a wrapped 32-bit uncompressed size, so size those by their zipped bytes
+const entryZippedSize = (entry: JSZip.JSZipObject): number => Number((entry as any)?._data?.compressedSize) || 0
+
+// Quick look at what the export contains, so the user can choose what to import
+async function scanArchive(file: File): Promise<Record<string, any>> {
+  postProgress('Opening ZIP file...', 20)
+  const contents = await openArchive(file)
+  postProgress('Looking at what is inside...', 70)
+
+  let channels = 0
+  let messageBytes = 0
+  let activityFiles = 0
+  let activityBytes = 0
+  contents.forEach((path, entry) => {
+    if (entry.dir) return
+    if (/(^|\/)messages\/[^/]+\/messages\.json$/i.test(path)) {
+      channels++
+      messageBytes += entrySize(entry)
+    } else if (/(^|\/)activity\/[^/]+\/events-[^/]*\.json$/i.test(path)) {
+      activityFiles++
+      activityBytes += entryZippedSize(entry)
+    }
+  })
+
+  if (channels === 0) {
+    zipCache = null
+    throw new Error('No message files found in ZIP. Make sure this is a Discord data export.')
+  }
+
+  const user = await readJsonEntry(contents, /(^|\/)account\/user\.json$/i)
+  const gameCount = Array.isArray(user?.user_activity_application_statistics)
+    ? user.user_activity_application_statistics.filter((entry: any) => Number(entry?.total_duration) > 0).length
+    : 0
+  const payments = recordsOf(await readJsonEntry(contents, /(^|\/)discord_billing\/payments\.json$/i)).length
+  const orbMoves = recordsOf(
+    await readJsonEntry(contents, /(^|\/)discord_virtual_currency\/coin_transactions\.json$/i)
+  ).length
+  const quests = recordsOf(await readJsonEntry(contents, /(^|\/)ads\/quests_user_status\.json$/i)).length
+
+  return {
+    fileName: file.name,
+    messages: { channels, bytes: messageBytes },
+    activity: { files: activityFiles, zippedBytes: activityBytes },
+    games: { count: gameCount },
+    money: { payments, orbMoves, quests },
+  }
 }
 
 // State kept between requests so switching years does not re-read the ZIP
@@ -153,6 +232,18 @@ interface LoadedArchive {
   key: string
   yearCounts: Record<number, number>
   userNames: Record<string, string>
+  channelLabels: Record<string, string>
+  guildNames: Record<string, string>
+  games: GameStat[]
+  activityEvents: number
+  orbsBalance: number | null
+}
+
+interface GameStat {
+  id: string
+  name: string
+  seconds: number
+  lastPlayed: string
 }
 let loaded: LoadedArchive | null = null
 
@@ -169,7 +260,13 @@ ctx.onmessage = async (e: MessageEvent<File | WorkerRequest>) => {
       throw new Error('Invalid file provided to worker')
     }
 
-    const stats = await processAndAnalyze(file, explicitYear)
+    if (payload?.action === 'scan') {
+      const scan = await scanArchive(file)
+      ctx.postMessage({ type: 'done', stats: scan })
+      return
+    }
+
+    const stats = await processAndAnalyze(file, explicitYear, normalizeSources(payload?.sources))
     ctx.postMessage({ type: 'done', stats })
   } catch (err: any) {
     console.error('Worker error:', err)
@@ -182,7 +279,8 @@ ctx.onmessage = async (e: MessageEvent<File | WorkerRequest>) => {
 
 async function ingestArchive(
   conn: duckdb.AsyncDuckDBConnection,
-  file: File
+  file: File,
+  sources: Sources
 ): Promise<Omit<LoadedArchive, 'key'>> {
   await conn.query(`DROP TABLE IF EXISTS messages`)
   await conn.query(`DROP TABLE IF EXISTS all_messages`)
@@ -198,10 +296,20 @@ async function ingestArchive(
         GuildName VARCHAR
       )
     `)
+  await conn.query(`DROP TABLE IF EXISTS activity`)
+  await conn.query(`DROP TABLE IF EXISTS all_activity`)
+  await conn.query(`
+      CREATE TABLE all_activity (
+        Type VARCHAR,
+        Timestamp TIMESTAMP,
+        A VARCHAR,
+        B VARCHAR,
+        C VARCHAR,
+        N DOUBLE
+      )
+    `)
 
-  postProgress('Reading ZIP file...', 10)
-  let zip = new JSZip()
-  let contents = await zip.loadAsync(file)
+  const contents = await openArchive(file)
 
   postProgress('Finding message files...', 12)
   const messageFiles: string[] = []
@@ -214,11 +322,36 @@ async function ingestArchive(
   // Who am I, and what are my friends called? (DM recipients are bare IDs)
   let selfId = ''
   const userNames: Record<string, string> = {}
+  const gameNames: Record<string, string> = {}
+  let orbsBalance: number | null = null
+  const rawGames: Array<{ id: string; seconds: number; lastPlayed: string }> = []
   try {
     const userFiles = contents.file(/(^|\/)account\/user\.json$/i) as JSZip.JSZipObject[]
     if (userFiles.length > 0) {
       const user = JSON.parse(await userFiles[0].async('string'))
       if (user?.id) selfId = String(user.id)
+      if (Number.isFinite(Number(user?.current_orbs_balance)) && user?.current_orbs_balance !== null) {
+        orbsBalance = Number(user.current_orbs_balance)
+      }
+      // All-time play time per application (ids only; names come from elsewhere)
+      if (Array.isArray(user?.user_activity_application_statistics)) {
+        for (const entry of user.user_activity_application_statistics) {
+          const seconds = Number(entry?.total_duration)
+          if (entry?.application_id && Number.isFinite(seconds) && seconds > 0) {
+            rawGames.push({
+              id: String(entry.application_id),
+              seconds,
+              lastPlayed: typeof entry.last_played_at === 'string' ? entry.last_played_at.slice(0, 10) : '',
+            })
+          }
+        }
+      }
+      if (Array.isArray(user?.library_applications)) {
+        for (const entry of user.library_applications) {
+          const app = entry?.application
+          if (app?.id && typeof app.name === 'string') gameNames[String(app.id)] = app.name
+        }
+      }
       if (Array.isArray(user?.relationships)) {
         for (const rel of user.relationships) {
           const id = rel?.id ?? rel?.user?.id
@@ -281,6 +414,27 @@ async function ingestArchive(
     console.warn('Failed to parse server index for server names', err)
   }
 
+  // Channel names for places we never typed in (voice channels): servers/<id>/channels.json
+  const channelLabels: Record<string, string> = {}
+  try {
+    const channelListFiles = contents.file(/(^|\/)(servers|guilds)\/[^/]+\/channels\.json$/i) as JSZip.JSZipObject[]
+    for (const channelListFile of channelListFiles) {
+      const guildId = channelListFile.name.split('/').slice(-2)[0]
+      const parsed = JSON.parse(await channelListFile.async('string'))
+      if (!Array.isArray(parsed)) continue
+      for (const channel of parsed) {
+        if (channel?.id && isKnownName(channel.name)) {
+          const guild = guildNames[guildId]
+          channelLabels[String(channel.id)] = guild
+            ? composeGuildChannelLabel(guild, channel.name)
+            : channel.name.trim()
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to parse server channel lists', err)
+  }
+
   if (messageFiles.length === 0) {
     throw new Error('No message files found in ZIP. Make sure this is a Discord data export.')
   }
@@ -332,13 +486,24 @@ async function ingestArchive(
       let guildName = ''
 
       if (kind === 'guild') {
-        // index label looks like "channel in Server" (or "Unknown channel in Server")
+        // index label looks like "channel, Server" (older exports: "channel in Server"),
+        // with "Unknown channel" standing in for deleted channels
         let indexChannel = indexLabel
         let indexGuild = ''
-        const inMatch = indexLabel.match(/^(.*?) in (.+)$/)
-        if (inMatch) {
-          indexChannel = inMatch[1]
-          indexGuild = inMatch[2]
+        const ownName = isKnownName(cData?.name) ? cData.name.trim() : ''
+        const unknownMatch = indexLabel.match(/^Unknown channel(?:, | in )(.+)$/i)
+        if (unknownMatch) {
+          indexChannel = ''
+          indexGuild = unknownMatch[1]
+        } else if (ownName && indexLabel.startsWith(`${ownName}, `)) {
+          indexChannel = ownName
+          indexGuild = indexLabel.slice(ownName.length + 2)
+        } else {
+          const splitMatch = indexLabel.match(/^(.*?)(?:, | in )(.+)$/)
+          if (splitMatch) {
+            indexChannel = splitMatch[1]
+            indexGuild = splitMatch[2]
+          }
         }
 
         if (isKnownName(cData?.name)) channelName = cData.name.trim()
@@ -375,6 +540,7 @@ async function ingestArchive(
       const label = kind === 'guild' && guildName && channelName
         ? composeGuildChannelLabel(guildName, channelName)
         : channelName
+      if (label || guildName) channelLabels[channelId] = label || guildName
 
       let insertedFromFile = 0
       for (const m of messages) {
@@ -433,7 +599,7 @@ async function ingestArchive(
 
     processedFiles++
     if (processedFiles % 20 === 0) {
-      const percent = 15 + Math.round((processedFiles / messageFiles.length) * 70)
+      const percent = 15 + Math.round((processedFiles / messageFiles.length) * 35)
       postProgress(`Processing... (${processedFiles}/${messageFiles.length})`, percent)
     }
   }
@@ -443,31 +609,383 @@ async function ingestArchive(
     rowBuffer = []
   }
 
-  // Let the ZIP buffer be collected
-  ; (contents as any) = null
-  ; (zip as any) = null
-
   if (totalMessagesInserted === 0) {
     throw new Error("No messages found in your Discord data.")
   }
 
-  return { yearCounts, userNames }
+  // Payments, Orbs and Quests (small JSON files; optional)
+  let activityEvents = 0
+  try {
+    if (sources.money) activityEvents += await ingestAccountExtras(conn, contents)
+  } catch (err) {
+    console.warn('Failed to read payments / orbs / quests', err)
+  }
+
+  // Activity logs: voice time, reactions, edits, commands... (optional, can be huge)
+  // Game names only exist in these logs, so "games" alone still needs one pass over them
+  try {
+    if (sources.activity || sources.games) {
+      activityEvents += await ingestActivity(conn, contents, gameNames, sources.activity)
+    }
+  } catch (err) {
+    console.warn('Failed to read the Activity logs; continuing with messages only', err)
+  }
+
+  const games: GameStat[] = (sources.games ? rawGames : [])
+    .sort((a, b) => b.seconds - a.seconds)
+    .map((game) => ({ ...game, name: gameNames[game.id] ?? '' }))
+
+  // Let the ZIP buffer be collected
+  zipCache = null
+
+  return { yearCounts, userNames, channelLabels, guildNames, games, activityEvents, orbsBalance }
 }
 
-async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Promise<any> {
+// ---------------------------------------------------------------------------
+// Payments (Account/user_data_exports/discord_billing), Orbs
+// (.../discord_virtual_currency) and Quests (Ads/quests_user_status.json).
+// Stored as rows of `all_activity` so they get the same per-year filtering.
+// ---------------------------------------------------------------------------
+
+async function readJsonEntry(contents: JSZip, pattern: RegExp): Promise<any | null> {
+  const matches = contents.file(pattern) as JSZip.JSZipObject[]
+  if (matches.length === 0) return null
+  try {
+    return JSON.parse(await matches[0].async('string'))
+  } catch (err) {
+    console.warn(`Failed to parse ${matches[0].name}`, err)
+    return null
+  }
+}
+
+const recordsOf = (parsed: any): any[] =>
+  Array.isArray(parsed) ? parsed : Array.isArray(parsed?.records) ? parsed.records : []
+
+async function ingestAccountExtras(conn: duckdb.AsyncDuckDBConnection, contents: JSZip): Promise<number> {
+  const rows: ActivityRow[] = []
+  const localTs = (raw: unknown): string | null => {
+    const date = parseTimestamp(raw)
+    return date ? toLocalSqlTimestamp(date) : null
+  }
+
+  // Payments. Amounts are in minor units (999 = 9.99). The export's own legend for
+  // the status column does not match the data (in real exports nearly every row is
+  // "1", including years-old ones), so treat whichever of 1 / 2 dominates as "paid".
+  const payments = recordsOf(await readJsonEntry(contents, /(^|\/)discord_billing\/payments\.json$/i))
+  const statusCounts: Record<string, number> = {}
+  for (const payment of payments) {
+    const status = String(payment?.status)
+    statusCounts[status] = (statusCounts[status] ?? 0) + 1
+  }
+  const paidStatus = (statusCounts['2'] ?? 0) > (statusCounts['1'] ?? 0) ? '2' : '1'
+  for (const payment of payments) {
+    if (String(payment?.status) !== paidStatus) continue
+    const ts = localTs(payment.created_at)
+    const amount = Number(payment.amount) - (Number(payment.amount_refunded) || 0)
+    if (!ts || !Number.isFinite(amount) || amount <= 0) continue
+    rows.push({
+      type: 'payment',
+      ts,
+      a: String(payment.currency ?? '').toLowerCase(),
+      b: String(payment.description ?? '').trim(),
+      c: '',
+      n: amount,
+    })
+  }
+
+  // Orbs: positive quantity = earned, negative = spent
+  const coinTransactions = recordsOf(
+    await readJsonEntry(contents, /(^|\/)discord_virtual_currency\/coin_transactions\.json$/i)
+  )
+  for (const transaction of coinTransactions) {
+    const ts = localTs(transaction?.created_at)
+    const quantity = Number(transaction?.quantity)
+    if (!ts || !Number.isFinite(quantity) || quantity === 0) continue
+    rows.push({ type: 'orb', ts, a: '', b: '', c: '', n: quantity })
+  }
+
+  // Quests: one row per milestone so each lands in the year it happened
+  const quests = recordsOf(await readJsonEntry(contents, /(^|\/)ads\/quests_user_status\.json$/i))
+  for (const quest of quests) {
+    const enrolled = localTs(quest?.enrolled_at)
+    const completed = localTs(quest?.completed_at)
+    const claimed = localTs(quest?.claimed_at)
+    if (enrolled) rows.push({ type: 'quest_enrolled', ts: enrolled, a: '', b: '', c: '', n: 0 })
+    if (completed) rows.push({ type: 'quest_completed', ts: completed, a: '', b: '', c: '', n: 0 })
+    if (claimed) {
+      rows.push({ type: 'quest_claimed', ts: claimed, a: '', b: '', c: '', n: Number(quest.orb_quantity_claimed) || 0 })
+    }
+  }
+
+  for (let offset = 0; offset < rows.length; offset += 4000) {
+    await insertActivityBatch(conn, rows.slice(offset, offset + 4000))
+  }
+  return rows.length
+}
+
+// ---------------------------------------------------------------------------
+// Activity logs (Activity/*/events-*.json): one JSON event per line, several
+// GB uncompressed. They are inflated as a stream and only the handful of event
+// types below are ever parsed, so memory stays flat.
+// ---------------------------------------------------------------------------
+
+const ACTIVITY_TYPES = new Set([
+  'voice_disconnect',
+  'leave_voice_channel',
+  'video_stream_ended',
+  'add_reaction',
+  'message_edited',
+  'message_deleted',
+  'application_command_used',
+  'app_opened',
+  'guild_joined',
+  'leave_guild',
+])
+
+type ActivityRow = { type: string; ts: string; a: string; b: string; c: string; n: number }
+
+async function insertActivityBatch(conn: duckdb.AsyncDuckDBConnection, rows: ActivityRow[]) {
+  if (!rows.length) return
+  const values = rows.map((r) =>
+    `('${r.type}','${r.ts}','${escapeLiteral(r.a)}','${escapeLiteral(r.b)}','${escapeLiteral(r.c)}',${Number.isFinite(r.n) ? r.n : 0})`
+  ).join(',')
+  await conn.query(`INSERT INTO all_activity VALUES ${values}`)
+}
+
+// Inflate one ZIP entry and hand out its text piece by piece.
+async function streamEntryText(
+  entry: JSZip.JSZipObject,
+  onText: (text: string) => void,
+  onProgress: (fraction: number) => void
+): Promise<void> {
+  const decoder = new TextDecoder()
+  const data = (entry as any)._data
+  const compressed: unknown = data?.compressedContent
+  const isDeflate = data?.compression?.magic === '\x08\x00'
+
+  // Fast path: the browser's native inflater over the bytes JSZip already holds
+  if (compressed instanceof Uint8Array && isDeflate && typeof DecompressionStream !== 'undefined') {
+    const CHUNK = 1 << 20
+    let position = 0
+    const source = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (position >= compressed.length) {
+          controller.close()
+          return
+        }
+        controller.enqueue(compressed.subarray(position, position + CHUNK))
+        position += CHUNK
+        onProgress(Math.min(1, position / compressed.length))
+      },
+    })
+    const reader = source.pipeThrough(new DecompressionStream('deflate-raw') as any).getReader()
+    for (; ;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      onText(decoder.decode(value as Uint8Array, { stream: true }))
+    }
+    onText(decoder.decode())
+    return
+  }
+
+  // Fallback: JSZip's own streaming inflater (slower, works everywhere)
+  await new Promise<void>((resolve, reject) => {
+    (entry as any).internalStream('uint8array')
+      .on('data', (chunk: Uint8Array, meta: { percent?: number }) => {
+        onText(decoder.decode(chunk, { stream: true }))
+        onProgress((meta?.percent ?? 0) / 100)
+      })
+      .on('error', reject)
+      .on('end', () => {
+        onText(decoder.decode())
+        resolve()
+      })
+      .resume()
+  })
+}
+
+const cleanValue = (value: unknown): string => {
+  if (value === null || value === undefined) return ''
+  const text = String(value).replace(/^"|"$/g, '')
+  return text === 'null' ? '' : text
+}
+
+async function ingestActivity(
+  conn: duckdb.AsyncDuckDBConnection,
+  contents: JSZip,
+  gameNames: Record<string, string>,
+  keepEvents: boolean
+): Promise<number> {
+  const files = (contents.file(/(^|\/)activity\/[^/]+\/events-[^/]*\.json$/i) as JSZip.JSZipObject[])
+    .filter((entry) => !entry.dir)
+  if (files.length === 0) return 0
+
+  // The feeds (reporting, tns, ...) repeat each other: de-duplicate by event_id
+  const seenEvents = new Set<string>()
+  // One voice connection can be reported by two event types: keep the longest
+  const voice = new Map<string, { ts: string; seconds: number; channel: string; guild: string }>()
+  const rows: ActivityRow[] = []
+  let inserted = 0
+  const MAX_VOICE_SECONDS = 7 * 24 * 3600
+
+  const handleLine = (line: string) => {
+    // Any event may reveal what a game id is called
+    const gameMatch = /"game_id":"(\d+)"/.exec(line)
+    if (gameMatch && !gameNames[gameMatch[1]]) {
+      try {
+        const event = JSON.parse(line)
+        const name = cleanValue(event.game_name) || cleanValue(event.game) || cleanValue(event.application_name)
+        if (name) gameNames[gameMatch[1]] = name
+      } catch { }
+    }
+
+    if (!keepEvents) return
+    const typeAt = line.indexOf('"event_type":"')
+    if (typeAt < 0) return
+    const typeStart = typeAt + 14
+    const type = line.slice(typeStart, line.indexOf('"', typeStart))
+    if (!ACTIVITY_TYPES.has(type)) return
+
+    let event: any
+    try {
+      event = JSON.parse(line)
+    } catch {
+      return
+    }
+
+    const eventId = cleanValue(event.event_id)
+    if (eventId) {
+      if (seenEvents.has(eventId)) return
+      seenEvents.add(eventId)
+    }
+
+    const date = parseTimestamp(cleanValue(event.timestamp))
+    if (!date) return
+    const ts = toLocalSqlTimestamp(date)
+
+    switch (type) {
+      case 'voice_disconnect':
+      case 'leave_voice_channel': {
+        const seconds = Number(cleanValue(event.duration)) / 1000 // reported in ms
+        if (!Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_VOICE_SECONDS) return
+        const key = cleanValue(event.rtc_connection_id) || eventId || `${ts}:${seconds}`
+        const previous = voice.get(key)
+        if (!previous || seconds > previous.seconds) {
+          voice.set(key, {
+            ts,
+            seconds,
+            channel: cleanValue(event.channel_id) || previous?.channel || '',
+            guild: cleanValue(event.guild_id) || previous?.guild || '',
+          })
+        }
+        return
+      }
+      case 'video_stream_ended': {
+        const seconds = Number(cleanValue(event.duration)) // reported in seconds
+        if (!Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_VOICE_SECONDS) return
+        rows.push({ type: 'stream', ts, a: cleanValue(event.participant_type), b: cleanValue(event.channel_id), c: '', n: seconds })
+        return
+      }
+      case 'add_reaction':
+        rows.push({
+          type: 'reaction',
+          ts,
+          a: cleanValue(event.emoji_name),
+          b: cleanValue(event.emoji_id),
+          c: event.emoji_animated === true || cleanValue(event.emoji_animated) === 'true' ? '1' : '0',
+          n: 0,
+        })
+        return
+      case 'message_edited':
+        rows.push({ type: 'edit', ts, a: '', b: '', c: '', n: 0 })
+        return
+      case 'message_deleted':
+        rows.push({ type: 'delete', ts, a: '', b: '', c: '', n: 0 })
+        return
+      case 'application_command_used':
+        rows.push({ type: 'command', ts, a: cleanValue(event.command_name), b: '', c: '', n: 0 })
+        return
+      case 'app_opened':
+        rows.push({ type: 'app_opened', ts, a: cleanValue(event.os), b: '', c: '', n: 0 })
+        return
+      case 'guild_joined':
+        rows.push({ type: 'server_joined', ts, a: cleanValue(event.guild_id), b: '', c: '', n: 0 })
+        return
+      case 'leave_guild':
+        rows.push({ type: 'server_left', ts, a: cleanValue(event.guild_id), b: '', c: '', n: 0 })
+        return
+    }
+  }
+
+  for (let index = 0; index < files.length; index++) {
+    const entry = files[index]
+    let carry = ''
+    let lastPercent = -1
+
+    const flush = async () => {
+      if (rows.length === 0) return
+      const batch = rows.splice(0, rows.length)
+      inserted += batch.length
+      await insertActivityBatch(conn, batch)
+    }
+
+    let pending: Promise<void> = Promise.resolve()
+    await streamEntryText(
+      entry,
+      (text) => {
+        const buffer = carry ? carry + text : text
+        let start = 0
+        for (; ;) {
+          const end = buffer.indexOf('\n', start)
+          if (end < 0) break
+          if (end > start) handleLine(buffer.slice(start, end))
+          start = end + 1
+        }
+        carry = buffer.slice(start)
+        if (rows.length >= 4000) pending = pending.then(flush)
+      },
+      (fraction) => {
+        const percent = 50 + Math.round(((index + fraction) / files.length) * 35)
+        if (percent !== lastPercent) {
+          lastPercent = percent
+          postProgress(`Reading activity log ${index + 1}/${files.length}...`, percent)
+        }
+      }
+    )
+    if (carry.trim()) handleLine(carry)
+    await pending
+    await flush()
+  }
+
+  const voiceRows: ActivityRow[] = []
+  for (const session of voice.values()) {
+    voiceRows.push({ type: 'voice', ts: session.ts, a: session.channel, b: session.guild, c: '', n: session.seconds })
+  }
+  for (let offset = 0; offset < voiceRows.length; offset += 4000) {
+    await insertActivityBatch(conn, voiceRows.slice(offset, offset + 4000))
+  }
+
+  return inserted + voiceRows.length
+}
+
+async function processAndAnalyze(
+  file: File,
+  explicitYear: number | 'all' | undefined,
+  sources: Sources
+): Promise<any> {
   postProgress('Initializing database...', 5)
   await initDuckDB()
   if (!conn) throw new Error('Database connection failed')
 
-  const key = `${file.name}:${file.size}:${file.lastModified}`
+  const key = `${fileKey(file)}:${sources.activity}:${sources.games}:${sources.money}`
   if (!loaded || loaded.key !== key) {
     loaded = null
-    const result = await ingestArchive(conn, file)
+    const result = await ingestArchive(conn, file, sources)
     loaded = { key, ...result }
   } else {
     postProgress('Reusing loaded archive...', 85)
   }
-  const { yearCounts, userNames } = loaded
+  const { yearCounts, userNames, channelLabels, guildNames, games, activityEvents, orbsBalance } = loaded
 
   postProgress('Identifying active year...', 88)
 
@@ -512,6 +1030,13 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
     postProgress('Preparing all-time view...', 90)
     await conn.query(`CREATE OR REPLACE TABLE messages AS SELECT * FROM all_messages`)
   }
+  await conn.query(`
+    CREATE OR REPLACE TABLE activity AS
+    SELECT * FROM all_activity
+    ${targetYear !== null
+      ? `WHERE Timestamp >= TIMESTAMP '${targetYear}-01-01 00:00:00' AND Timestamp < TIMESTAMP '${targetYear + 1}-01-01 00:00:00'`
+      : ''}
+  `)
 
   const countStats = await conn.query(`SELECT COUNT(*) as c FROM messages`)
   const countRow = countStats.toArray()[0]
@@ -531,6 +1056,17 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
     userNames,
     singleYear: targetYear !== null,
   })
+  if (activityEvents > 0) {
+    Object.assign(stats, await runActivityQueries(conn, { channelLabels, guildNames }))
+  }
+  stats.hasActivityData = activityEvents > 0
+  stats.sources = sources
+  stats.orbsBalance = orbsBalance
+  // Play time in the export is an all-time total per game, not per year
+  const namedGames = games.filter((game) => game.name)
+  stats.topGames = namedGames.slice(0, 10).map((game) => ({ name: game.name, seconds: game.seconds, lastPlayed: game.lastPlayed }))
+  stats.gamesPlayed = games.length
+  stats.gamesTotalSeconds = games.reduce((total, game) => total + game.seconds, 0)
   stats.year = targetYear !== null ? targetYear : 'all'
   stats.availableYears = availableYears
   stats.yearlyDistribution = Object.fromEntries(
@@ -539,6 +1075,7 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
   stats.previousYearMessages = targetYear !== null ? (yearCounts[targetYear - 1] ?? 0) : 0
 
   await conn.query(`DROP TABLE IF EXISTS messages`)
+  await conn.query(`DROP TABLE IF EXISTS activity`)
 
   postProgress('Done!', 100)
 
@@ -586,6 +1123,136 @@ const IGNORED_LINK_DOMAINS = [
 ]
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+// Stats that come from the Activity logs (table `activity`, already year-filtered)
+async function runActivityQueries(
+  conn: duckdb.AsyncDuckDBConnection,
+  names: { channelLabels: Record<string, string>; guildNames: Record<string, string> }
+): Promise<Record<string, any>> {
+  const rowsOf = async (sql: string): Promise<any[]> => {
+    try {
+      return (await conn.query(sql)).toArray()
+    } catch (err) {
+      console.warn('Activity query failed', err)
+      return []
+    }
+  }
+
+  const totals: Record<string, { count: number; sum: number; max: number }> = {}
+  for (const row of await rowsOf(`SELECT Type, COUNT(*) as c, SUM(N) as s, MAX(N) as m FROM activity GROUP BY Type`)) {
+    totals[String(row.Type)] = { count: Number(row.c), sum: Number(row.s) || 0, max: Number(row.m) || 0 }
+  }
+  const total = (type: string) => totals[type] ?? { count: 0, sum: 0, max: 0 }
+
+  // Voice: where the hours went. Channels we cannot name fall back to their server.
+  const voicePlaces = new Map<string, { seconds: number; sessions: number }>()
+  const voiceRows = await rowsOf(`
+    SELECT A as channel, B as guild, SUM(N) as seconds, COUNT(*) as sessions
+    FROM activity WHERE Type = 'voice'
+    GROUP BY A, B
+  `)
+  for (const row of voiceRows) {
+    const label = names.channelLabels[String(row.channel)] || names.guildNames[String(row.guild)] || ''
+    if (!label) continue
+    const place = voicePlaces.get(label) ?? { seconds: 0, sessions: 0 }
+    place.seconds += Number(row.seconds) || 0
+    place.sessions += Number(row.sessions) || 0
+    voicePlaces.set(label, place)
+  }
+  const topVoiceChannels = [...voicePlaces.entries()]
+    .map(([name, place]) => ({ name, seconds: Math.round(place.seconds), sessions: place.sessions }))
+    .sort((a, b) => b.seconds - a.seconds)
+    .slice(0, 10)
+
+  const voiceDays = await rowsOf(`SELECT COUNT(DISTINCT DATE(Timestamp)) as days FROM activity WHERE Type = 'voice'`)
+  const streams = await rowsOf(`
+    SELECT
+      SUM(N) FILTER (WHERE A = 'receiver') as watched,
+      SUM(N) FILTER (WHERE A <> 'receiver') as shared
+    FROM activity WHERE Type = 'stream'
+  `)
+
+  const topReactions = (await rowsOf(`
+    SELECT A as name, B as id, MAX(C) as animated, COUNT(*) as count
+    FROM activity WHERE Type = 'reaction' AND A <> ''
+    GROUP BY A, B ORDER BY count DESC LIMIT 10
+  `)).map((row) => ({
+    name: String(row.name),
+    id: String(row.id ?? ''),
+    isAnimated: String(row.animated) === '1',
+    count: Number(row.count),
+  }))
+
+  const topCommands = (await rowsOf(`
+    SELECT A as name, COUNT(*) as count
+    FROM activity WHERE Type = 'command' AND A <> ''
+    GROUP BY A ORDER BY count DESC LIMIT 10
+  `)).map((row) => ({ name: `/${row.name}`, count: Number(row.count) }))
+
+  const appOpensByPlatform = (await rowsOf(`
+    SELECT A as name, COUNT(*) as count
+    FROM activity WHERE Type = 'app_opened' AND A <> ''
+    GROUP BY A ORDER BY count DESC LIMIT 6
+  `)).map((row) => ({ name: String(row.name), count: Number(row.count) }))
+
+  // Money: one total per currency (orb-priced purchases are counted under Orbs)
+  const spending = (await rowsOf(`
+    SELECT A as currency, SUM(N) as amount, COUNT(*) as count
+    FROM activity WHERE Type = 'payment' AND A <> 'discord_orb' AND A <> ''
+    GROUP BY A ORDER BY count DESC, amount DESC
+  `)).map((row) => ({ currency: String(row.currency), amount: Number(row.amount) / 100, count: Number(row.count) }))
+
+  const topPurchases = (await rowsOf(`
+    SELECT B as name, COUNT(*) as count
+    FROM activity WHERE Type = 'payment' AND A <> 'discord_orb' AND B <> ''
+    GROUP BY B ORDER BY count DESC LIMIT 10
+  `)).map((row) => ({ name: String(row.name), count: Number(row.count) }))
+
+  const paymentExtras = await rowsOf(`
+    SELECT
+      COUNT(*) FILTER (WHERE A <> 'discord_orb' AND B ILIKE 'GIFT%') as gifts,
+      COUNT(*) FILTER (WHERE A = 'discord_orb') as orb_purchases
+    FROM activity WHERE Type = 'payment'
+  `)
+
+  const orbs = await rowsOf(`
+    SELECT
+      SUM(N) FILTER (WHERE N > 0) as earned,
+      -SUM(N) FILTER (WHERE N < 0) as spent
+    FROM activity WHERE Type = 'orb'
+  `)
+
+  return {
+    spending,
+    paymentsCount: spending.reduce((sum, entry) => sum + entry.count, 0),
+    topPurchases,
+    giftsBought: Number(paymentExtras[0]?.gifts ?? 0),
+    orbPurchases: Number(paymentExtras[0]?.orb_purchases ?? 0),
+    orbsEarned: Math.round(Number(orbs[0]?.earned ?? 0)),
+    orbsSpent: Math.round(Number(orbs[0]?.spent ?? 0)),
+    questsEnrolled: total('quest_enrolled').count,
+    questsCompleted: total('quest_completed').count,
+    questsClaimed: total('quest_claimed').count,
+    questOrbs: Math.round(total('quest_claimed').sum),
+    voiceSeconds: Math.round(total('voice').sum),
+    voiceSessions: total('voice').count,
+    longestVoiceSeconds: Math.round(total('voice').max),
+    voiceDays: Number(voiceDays[0]?.days ?? 0),
+    topVoiceChannels,
+    streamWatchSeconds: Math.round(Number(streams[0]?.watched ?? 0)),
+    streamShareSeconds: Math.round(Number(streams[0]?.shared ?? 0)),
+    reactionsCount: total('reaction').count,
+    topReactions,
+    editsCount: total('edit').count,
+    deletedCount: total('delete').count,
+    commandsCount: total('command').count,
+    topCommands,
+    appOpens: total('app_opened').count,
+    appOpensByPlatform,
+    serversJoined: total('server_joined').count,
+    serversLeft: total('server_left').count,
+  }
+}
 
 interface StatsContext {
   userNames: Record<string, string>

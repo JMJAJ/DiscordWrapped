@@ -1,7 +1,23 @@
 "use client"
 
+export interface ImportSources {
+  activity: boolean
+  games: boolean
+  money: boolean
+}
+
+export interface ArchiveScan {
+  fileName: string
+  messages: { channels: number; bytes: number }
+  activity: { files: number; zippedBytes: number }
+  games: { count: number }
+  money: { payments: number; orbMoves: number; quests: number }
+}
+
 interface ProcessOptions {
   year?: number | 'all'
+  sources?: ImportSources
+  action?: 'scan' | 'process'
 }
 
 // One long-lived worker: it keeps the parsed archive in DuckDB, so asking for
@@ -44,7 +60,7 @@ function runInWorker(
 
     active.onerror = (err) => fail(err)
 
-    active.postMessage({ file, targetYear: options.year })
+    active.postMessage({ file, action: options.action ?? 'process', targetYear: options.year, sources: options.sources })
   })
 }
 
@@ -55,6 +71,16 @@ export async function processAndAnalyze(
 ): Promise<any> {
   // Requests share one worker, so run them one at a time
   const run = queue.then(() => runInWorker(file, onProgress, options))
+  queue = run.catch(() => undefined)
+  return run
+}
+
+// Quick look inside the ZIP (no import yet) so the user can choose what to load
+export async function scanArchive(
+  file: File,
+  onProgress: (stage: string, percent: number) => void
+): Promise<ArchiveScan> {
+  const run = queue.then(() => runInWorker(file, onProgress, { action: 'scan' }))
   queue = run.catch(() => undefined)
   return run
 }

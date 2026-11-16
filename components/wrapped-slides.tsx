@@ -2,8 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame, Mic, Headphones, MonitorPlay, Pencil, Terminal, Smartphone, DoorOpen, Gamepad2, CreditCard, ShoppingBag, Coins, Trophy, LayoutGrid } from "lucide-react"
 import { Card } from "@/components/ui/card"
 
 interface DiscordData {
@@ -71,6 +70,57 @@ interface DiscordData {
   gifCount?: number
   previousYearMessages?: number
   timeZone?: string
+  // From the Activity logs and Account data (missing in exports without them)
+  hasActivityData?: boolean
+  voiceSeconds?: number
+  voiceSessions?: number
+  longestVoiceSeconds?: number
+  voiceDays?: number
+  topVoiceChannels?: Array<{ name: string; seconds: number; sessions: number }>
+  streamWatchSeconds?: number
+  streamShareSeconds?: number
+  reactionsCount?: number
+  topReactions?: Array<{ name: string; id: string; count: number; isAnimated?: boolean }>
+  deletedCount?: number
+  commandsCount?: number
+  topCommands?: Array<{ name: string; count: number }>
+  appOpens?: number
+  appOpensByPlatform?: Array<{ name: string; count: number }>
+  serversJoined?: number
+  serversLeft?: number
+  topGames?: Array<{ name: string; seconds: number; lastPlayed?: string }>
+  gamesPlayed?: number
+  gamesTotalSeconds?: number
+  // Payments, Orbs and Quests
+  spending?: Array<{ currency: string; amount: number; count: number }>
+  paymentsCount?: number
+  topPurchases?: Array<{ name: string; count: number }>
+  giftsBought?: number
+  orbsEarned?: number
+  orbsSpent?: number
+  orbsBalance?: number | null
+  questsEnrolled?: number
+  questsCompleted?: number
+  questsClaimed?: number
+  questOrbs?: number
+}
+
+// 307.87, "eur" -> "€307.87"
+function formatMoney(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(amount)
+  } catch {
+    return `${amount.toFixed(2)} ${currency.toUpperCase()}`
+  }
+}
+
+// 5400 -> "1h 30m", 400000 -> "111h"
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.round((seconds % 3600) / 60)
+  if (hours >= 100) return `${hours.toLocaleString()}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${Math.max(1, minutes)}m`
 }
 
 type Bar = { label: string; tip: string; value: number }
@@ -193,6 +243,173 @@ function DiscordEmoji({ name, id, isAnimated, size = 24 }: { name: string; id: s
       style={{ width: size, height: size }}
       loading="lazy"
     />
+  )
+}
+
+// Slides are grouped into chapters; the navigation shows one segment per chapter
+const CHAPTER_ORDER = ["Intro", "Messages", "Rhythm", "Places", "Style", "Emojis", "Voice", "Extras", "Recap"]
+
+const CHAPTER_OF: Record<string, string> = {
+  "intro": "Intro",
+  "total-messages": "Messages", "year-over-year": "Messages", "yearly-chart": "Messages",
+  "total-words": "Messages", "days-active": "Messages", "longest-streak": "Messages",
+  "peak-hour": "Rhythm", "hourly-chart": "Rhythm", "night-owl": "Rhythm", "early-bird": "Rhythm",
+  "weekend-warrior": "Rhythm", "weekday-chart": "Rhythm", "busiest-day": "Rhythm",
+  "calendar-heatmap": "Rhythm", "monthly-chart": "Rhythm", "most-active-month": "Rhythm",
+  "burst-mode": "Rhythm", "ghosting": "Rhythm",
+  "top-channels": "Places", "top-servers": "Places", "top-dms": "Places", "dm-vs-server": "Places",
+  "servers-joined": "Places",
+  "conversation-starter": "Style", "hype-person": "Style", "screaming": "Style", "curious-mind": "Style",
+  "voice-of-reason": "Style", "link-sharer": "Style", "top-domains": "Style", "attachments": "Style",
+  "gifs": "Style", "mentions": "Style", "top-mentions": "Style", "top-words": "Style",
+  "sentiment": "Style", "longest-message": "Style", "edits": "Style",
+  "top-emojis": "Emojis", "top-unicode-emojis": "Emojis", "emoji-only": "Emojis", "top-reactions": "Emojis",
+  "voice-time": "Voice", "top-voice": "Voice", "streams-watched": "Voice",
+  "top-commands": "Extras", "app-opens": "Extras", "money-spent": "Extras", "top-purchases": "Extras",
+  "orbs": "Extras", "quests": "Extras", "top-games": "Extras",
+  "summary": "Recap", "outro": "Recap",
+}
+
+type Chapter = { name: string; start: number; count: number }
+
+function ChapterNav({ slides, current, onGo, onPrev, onNext }: {
+  slides: any[]
+  current: number
+  onGo: (index: number) => void
+  onPrev: () => void
+  onNext: () => void
+}) {
+  const [open, setOpen] = useState(false)
+
+  const chapters = useMemo(() => {
+    const list: Chapter[] = []
+    slides.forEach((slide, index) => {
+      const last = list[list.length - 1]
+      if (last && last.name === slide.chapter) last.count++
+      else list.push({ name: slide.chapter, start: index, count: 1 })
+    })
+    return list
+  }, [slides])
+
+  const chapterIndex = Math.max(0, chapters.findIndex((chapter) => current >= chapter.start && current < chapter.start + chapter.count))
+  const chapter = chapters[chapterIndex]
+  const within = current - chapter.start
+  const atStart = current === 0
+  const atEnd = current === slides.length - 1
+  const nextChapter = !atEnd && current + 1 >= chapter.start + chapter.count ? chapters[chapterIndex + 1]?.name : ""
+  const titleOf = (slide: any): string => slide.title ?? slide.label ?? slide.id
+
+  return (
+    <div className="fixed bottom-4 left-0 right-0 z-20 px-4">
+      <div className="mx-auto w-full max-w-5xl space-y-3">
+        {open && (
+          <section
+            aria-label="All slides"
+            className="grid max-h-[55vh] gap-6 overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-900 p-6 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]"
+          >
+            {chapters.map((group) => (
+              <div key={group.name} className="min-w-0 space-y-2">
+                <p className="font-mono text-xs uppercase tracking-widest text-red-400">{group.name}</p>
+                <div className="flex flex-col gap-0.5">
+                  {slides.slice(group.start, group.start + group.count).map((slide, offset) => {
+                    const index = group.start + offset
+                    const active = index === current
+                    return (
+                      <button
+                        key={slide.id}
+                        type="button"
+                        aria-current={active ? "true" : undefined}
+                        onClick={() => {
+                          onGo(index)
+                          setOpen(false)
+                        }}
+                        className={`-mx-3 min-h-11 rounded-lg px-3 text-left text-sm leading-snug transition-colors ${active
+                          ? "bg-red-600 font-semibold text-white"
+                          : "text-zinc-200 hover:bg-zinc-800"}`}
+                      >
+                        {titleOf(slide)}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
+        <nav aria-label="Slides" className="space-y-3.5 rounded-2xl border border-zinc-800 bg-zinc-950/95 px-5 py-4 backdrop-blur-md">
+          <div className="flex gap-1.5 overflow-x-auto">
+            {chapters.map((item, index) => {
+              const isCurrent = index === chapterIndex
+              const done = index < chapterIndex
+              const fill = done ? 100 : isCurrent ? ((within + 1) / item.count) * 100 : 0
+              return (
+                <button
+                  key={item.name}
+                  type="button"
+                  onClick={() => onGo(item.start)}
+                  aria-current={isCurrent ? "true" : undefined}
+                  className="flex min-h-12 flex-col gap-2 pt-1.5 text-left"
+                  style={{ flex: `${item.count} 0 72px` }}
+                >
+                  <span aria-hidden="true" className="block h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                    <span
+                      className={`block h-full rounded-full transition-all duration-300 ${isCurrent ? "bg-red-500" : "bg-red-900"}`}
+                      style={{ width: `${fill}%` }}
+                    />
+                  </span>
+                  <span className={`whitespace-nowrap font-mono text-xs ${isCurrent
+                    ? "font-bold text-white"
+                    : done ? "font-medium text-zinc-300" : "font-medium text-zinc-400"}`}
+                  >
+                    {item.name}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={onPrev}
+              disabled={atStart}
+              aria-label="Previous slide"
+              className="flex h-12 w-12 flex-none items-center justify-center rounded-full bg-zinc-800 text-white transition hover:bg-zinc-700 disabled:text-zinc-500 disabled:hover:bg-zinc-800"
+            >
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </button>
+
+            <div className="min-w-[160px] flex-1">
+              <p className="font-mono text-base font-bold text-white">
+                {chapter.name} <span className="font-medium text-zinc-400">{within + 1} / {chapter.count}</span>
+              </p>
+              <p className="text-[13px] text-zinc-400">Slide {current + 1} of {slides.length} · arrow keys work too</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setOpen((value) => !value)}
+              aria-expanded={open}
+              className="flex min-h-12 items-center gap-2 rounded-full border border-zinc-600 px-4 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+            >
+              <LayoutGrid className="h-[18px] w-[18px]" aria-hidden="true" />
+              {open ? "Close" : "All slides"}
+            </button>
+
+            <button
+              type="button"
+              onClick={onNext}
+              disabled={atEnd}
+              className="flex min-h-12 items-center gap-2 rounded-full bg-red-600 px-5 text-[15px] font-bold text-white transition hover:bg-red-500 disabled:bg-zinc-800 disabled:text-zinc-400"
+            >
+              {atEnd ? "The end" : nextChapter ? `Next: ${nextChapter}` : "Next"}
+              <ChevronRight className="h-[18px] w-[18px]" aria-hidden="true" />
+            </button>
+          </div>
+        </nav>
+      </div>
+    </div>
   )
 }
 
@@ -814,6 +1031,232 @@ function createSlides(data: DiscordData) {
     })
   }
 
+  // ---- Activity log slides (voice, reactions, edits, commands, app opens) ----
+
+  // Voice time
+  const voiceSeconds = data.voiceSeconds ?? 0
+  if (voiceSeconds >= 3600) {
+    const voiceHours = Math.round(voiceSeconds / 3600)
+    const voiceStat = formatStat(voiceHours)
+    const voiceDays = data.voiceDays ?? 0
+    slides.push({
+      id: "voice-time",
+      type: "stat",
+      icon: Mic,
+      stat: `${voiceStat.value}h`,
+      statSize: voiceStat.size,
+      label: "In Voice Chat",
+      description: `${(data.voiceSessions ?? 0).toLocaleString()} sessions on ${voiceDays.toLocaleString()} day${voiceDays === 1 ? "" : "s"} • longest: ${formatDuration(data.longestVoiceSeconds ?? 0)}`,
+      funFact: voiceHours >= 48 ? `That's ${(voiceHours / 24).toFixed(voiceHours >= 240 ? 0 : 1)} full days of talking!` : null,
+    })
+  }
+
+  // Where the voice hours went
+  const topVoiceChannels = data.topVoiceChannels ?? []
+  if (topVoiceChannels.length > 1) {
+    slides.push({
+      id: "top-voice",
+      type: "list",
+      title: "Your Voice Hangouts",
+      icon: Headphones,
+      data: topVoiceChannels.slice(0, 5).map((place) => ({
+        name: place.name,
+        count: place.seconds,
+        value: formatDuration(place.seconds),
+      })),
+      description: `${topVoiceChannels[0].name} heard you the most`,
+    })
+  }
+
+  // Streams watched
+  const streamWatchSeconds = data.streamWatchSeconds ?? 0
+  if (streamWatchSeconds >= 3600) {
+    slides.push({
+      id: "streams-watched",
+      type: "stat",
+      icon: MonitorPlay,
+      stat: formatDuration(streamWatchSeconds),
+      statSize: "text-6xl md:text-8xl",
+      label: "Watching Streams",
+      description: (data.streamShareSeconds ?? 0) >= 600
+        ? `Plus ${formatDuration(data.streamShareSeconds ?? 0)} sharing your own screen`
+        : "Front-row seat on your friends' screens",
+    })
+  }
+
+  // Reactions
+  const topReactions = data.topReactions ?? []
+  if (topReactions.length > 1 && (data.reactionsCount ?? 0) > 20) {
+    slides.push({
+      id: "top-reactions",
+      type: "list",
+      title: "Your Go-To Reactions",
+      icon: Smile,
+      data: topReactions.slice(0, 5),
+      description: `${compactNumber(data.reactionsCount ?? 0)} reactions added`,
+    })
+  }
+
+  // Edits and deletions
+  if (data.editsCount > 50) {
+    const editStat = formatStat(data.editsCount)
+    const editPercent = Math.round((data.editsCount / data.totalMessages) * 100)
+    const deleted = data.deletedCount ?? 0
+    slides.push({
+      id: "edits",
+      type: "stat",
+      icon: Pencil,
+      stat: editStat.value,
+      statSize: editStat.size,
+      label: "Messages Edited",
+      description: !isAllTime && editPercent >= 1
+        ? `${editPercent}% of your messages needed a second take`
+        : "Nobody gets it right the first time",
+      funFact: deleted > 20 ? `...and ${compactNumber(deleted)} deleted. We saw nothing.` : null,
+    })
+  }
+
+  // Slash commands
+  const topCommands = data.topCommands ?? []
+  if (topCommands.length > 1 && (data.commandsCount ?? 0) > 10) {
+    slides.push({
+      id: "top-commands",
+      type: "list",
+      title: "Your Favorite Commands",
+      icon: Terminal,
+      data: topCommands.slice(0, 5),
+      description: `${compactNumber(data.commandsCount ?? 0)} bot commands used`,
+    })
+  }
+
+  // App opens
+  const appOpens = data.appOpens ?? 0
+  if (appOpens > 50) {
+    const openStat = formatStat(appOpens)
+    const platforms = data.appOpensByPlatform ?? []
+    const mainPlatform = platforms[0]
+    const platformShare = mainPlatform ? Math.round((mainPlatform.count / appOpens) * 100) : 0
+    // Discord mostly logs this event on phones, so say so when that's all there is
+    const mobileOnly = platforms.length > 0 && platforms.every((p) => /android|ios/i.test(p.name))
+    slides.push({
+      id: "app-opens",
+      type: "stat",
+      icon: Smartphone,
+      stat: openStat.value,
+      statSize: openStat.size,
+      label: mobileOnly ? "Times You Opened Discord on Your Phone" : "Times You Opened Discord",
+      description: `About ${Math.max(1, Math.round(appOpens / Math.max(1, data.daysActive)))} times per active day`,
+      funFact: mainPlatform && platformShare < 100 ? `${platformShare}% of them on ${mainPlatform.name}` : null,
+    })
+  }
+
+  // Servers joined / left
+  const serversJoined = data.serversJoined ?? 0
+  if (serversJoined > 3) {
+    const serversLeft = data.serversLeft ?? 0
+    slides.push({
+      id: "servers-joined",
+      type: "stat",
+      icon: DoorOpen,
+      stat: `+${serversJoined.toLocaleString()}`,
+      statSize: "text-7xl md:text-9xl",
+      label: "Servers Joined",
+      description: serversLeft > 0 ? `...and you walked out of ${serversLeft.toLocaleString()}` : "Always room for one more",
+    })
+  }
+
+  // Money spent on Discord (one total per currency)
+  const spending = data.spending ?? []
+  if (spending.length > 0) {
+    const [mainSpend, ...otherSpend] = spending
+    const paymentsCount = data.paymentsCount ?? 0
+    const giftsBought = data.giftsBought ?? 0
+    slides.push({
+      id: "money-spent",
+      type: "stat",
+      icon: CreditCard,
+      stat: formatMoney(mainSpend.amount, mainSpend.currency),
+      statSize: "text-5xl md:text-7xl",
+      label: "Spent on Discord",
+      description: otherSpend.length > 0
+        ? `Plus ${otherSpend.map((entry) => formatMoney(entry.amount, entry.currency)).join(" and ")} • ${paymentsCount} payments in total`
+        : `Across ${paymentsCount} payment${paymentsCount === 1 ? "" : "s"}`,
+      funFact: giftsBought > 0 ? `${giftsBought} of them ${giftsBought === 1 ? "was a gift" : "were gifts"} for someone else 🎁` : null,
+    })
+  }
+
+  // What the money went on
+  const topPurchases = data.topPurchases ?? []
+  if (topPurchases.length > 1) {
+    slides.push({
+      id: "top-purchases",
+      type: "list",
+      title: "What You Bought",
+      icon: ShoppingBag,
+      data: topPurchases.slice(0, 5).map((purchase) => ({
+        name: purchase.name,
+        count: purchase.count,
+        value: `×${purchase.count}`,
+      })),
+      description: "Your most repeated purchases",
+    })
+  }
+
+  // Orbs
+  const orbsEarned = data.orbsEarned ?? 0
+  const orbsSpent = data.orbsSpent ?? 0
+  if (orbsEarned > 0 || orbsSpent > 0) {
+    const orbStat = formatStat(orbsEarned)
+    const orbsBalance = data.orbsBalance
+    slides.push({
+      id: "orbs",
+      type: "stat",
+      icon: Coins,
+      stat: orbStat.value,
+      statSize: orbStat.size,
+      label: "Orbs Earned",
+      description: orbsSpent > 0
+        ? `You spent ${orbsSpent.toLocaleString()} of them`
+        : "And you haven't spent a single one",
+      funFact: typeof orbsBalance === "number" ? `Current balance: ${orbsBalance.toLocaleString()} Orbs` : null,
+    })
+  }
+
+  // Quests
+  const questsCompleted = data.questsCompleted ?? 0
+  if (questsCompleted > 0) {
+    const questStat = formatStat(questsCompleted)
+    const questsEnrolled = data.questsEnrolled ?? 0
+    const questOrbs = data.questOrbs ?? 0
+    slides.push({
+      id: "quests",
+      type: "stat",
+      icon: Trophy,
+      stat: questStat.value,
+      statSize: questStat.size,
+      label: "Quests Completed",
+      description: `Out of ${questsEnrolled.toLocaleString()} accepted • ${(data.questsClaimed ?? 0).toLocaleString()} rewards claimed`,
+      funFact: questOrbs > 0 ? `${questOrbs.toLocaleString()} Orbs came straight from quests` : null,
+    })
+  }
+
+  // Games (the export only has all-time totals)
+  const topGames = data.topGames ?? []
+  if (topGames.length > 1) {
+    slides.push({
+      id: "top-games",
+      type: "list",
+      title: isAllTime ? "Your Most Played Games" : "Most Played Games (All Time)",
+      icon: Gamepad2,
+      data: topGames.slice(0, 5).map((game) => ({
+        name: game.name,
+        count: game.seconds,
+        value: formatDuration(game.seconds),
+      })),
+      description: `${formatDuration(data.gamesTotalSeconds ?? 0)} across ${(data.gamesPlayed ?? 0).toLocaleString()} games, as seen by Discord`,
+    })
+  }
+
   // Summary card - Spotify style
   const totalSentimentCalc = data.sentimentPositive + data.sentimentNegative
   const positivePercentCalc = totalSentimentCalc > 0 ? Math.round((data.sentimentPositive / totalSentimentCalc) * 100) : 50
@@ -860,7 +1303,14 @@ function createSlides(data: DiscordData) {
     funFact: isAllTime ? "Your story keeps growing. 🎉" : `See you in ${numericYear + 1}! 🎉`,
   })
 
+  // Group by chapter (stable within a chapter, so the order above still matters)
+  const chapterRank = (slide: any) => {
+    const rank = CHAPTER_ORDER.indexOf(CHAPTER_OF[slide.id] ?? "Extras")
+    return rank < 0 ? CHAPTER_ORDER.indexOf("Extras") : rank
+  }
   return slides
+    .map((slide, position) => ({ ...slide, chapter: CHAPTER_ORDER[chapterRank(slide)], position }))
+    .sort((a, b) => chapterRank(a) - chapterRank(b) || a.position - b.position)
 }
 
 
@@ -967,7 +1417,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
       </div>
 
       {/* Main content */}
-      <div className="relative z-10 flex min-h-screen items-center justify-center p-4">
+      <div className="relative z-10 flex min-h-screen items-center justify-center px-4 pt-20 pb-48">
         <AnimatePresence initial={false} custom={direction} mode="wait">
           <motion.div
             key={currentSlide}
@@ -1067,7 +1517,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                               </span>
                             )}
                           </div>
-                          <span className="text-lg font-bold text-red-400 whitespace-nowrap">{compactNumber(item.count)}</span>
+                          <span className="text-lg font-bold text-red-400 whitespace-nowrap">{item.value ?? compactNumber(item.count)}</span>
                         </motion.div>
                       )
                     })}
@@ -1341,51 +1791,16 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
       </div>
 
       {/* Navigation */}
-      <div className="fixed bottom-6 left-0 right-0 z-20">
-        <div className="max-w-3xl mx-auto px-4">
-          <div className="flex items-center justify-between bg-zinc-900/60 backdrop-blur-md rounded-full p-2 border border-red-900/20">
-            <Button
-              onClick={prevSlide}
-              variant="ghost"
-              size="sm"
-              disabled={currentSlide === 0}
-              className="text-white hover:bg-red-900/30 disabled:opacity-20 rounded-full"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </Button>
-
-            <div className="flex gap-1.5 items-center">
-              {slides.map((_, index) => (
-                <button
-                  key={index}
-                  onClick={() => {
-                    setDirection(index > currentSlide ? 1 : -1)
-                    setCurrentSlide(index)
-                  }}
-                  className={`rounded-full transition-all duration-300 ${index === currentSlide
-                    ? "w-6 h-2 bg-red-500"
-                    : "w-2 h-2 bg-gray-600 hover:bg-gray-500"
-                    }`}
-                />
-              ))}
-            </div>
-
-            <Button
-              onClick={nextSlide}
-              disabled={currentSlide === slides.length - 1}
-              size="sm"
-              className="bg-red-600 hover:bg-red-500 text-white disabled:opacity-20 rounded-full"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </Button>
-          </div>
-
-          {/* Slide counter */}
-          <p className="text-center text-xs text-gray-500 mt-2">
-            {currentSlide + 1} / {slides.length} • Use arrow keys to navigate
-          </p>
-        </div>
-      </div>
+      <ChapterNav
+        slides={slides}
+        current={currentSlide}
+        onGo={(index) => {
+          setDirection(index > currentSlide ? 1 : -1)
+          setCurrentSlide(index)
+        }}
+        onPrev={prevSlide}
+        onNext={nextSlide}
+      />
     </div>
   )
 }

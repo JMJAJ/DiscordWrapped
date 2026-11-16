@@ -9,9 +9,10 @@ interface YearSelectorProps {
   onSelect: (year: number | 'all') => void
   onContinue: () => void
   onReupload?: () => void
+  onChangeSources?: () => void
 }
 
-export function YearSelector({ years, selectedYear, onSelect, onContinue, onReupload }: YearSelectorProps) {
+export function YearSelector({ years, selectedYear, onSelect, onContinue, onReupload, onChangeSources }: YearSelectorProps) {
   const options = useMemo(() => {
     const unique = Array.from(new Set(years)).filter((year) => Number.isFinite(year))
     if (unique.length === 0) {
@@ -102,8 +103,19 @@ export function YearSelector({ years, selectedYear, onSelect, onContinue, onReup
                 Continue
               </button>
             </div>
-            {onReupload && (
+            {onChangeSources && (
               <div className="mt-4 text-center">
+                <button
+                  type="button"
+                  onClick={onChangeSources}
+                  className="text-xs font-medium text-gray-400 underline-offset-4 hover:text-red-400 hover:underline transition"
+                >
+                  Change what is imported
+                </button>
+              </div>
+            )}
+            {onReupload && (
+              <div className="mt-2 text-center">
                 <button
                   type="button"
                   onClick={onReupload}
