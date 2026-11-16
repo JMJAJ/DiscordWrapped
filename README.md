@@ -18,6 +18,10 @@ A Spotify‑inspired, fully client-side recap of your Discord activity. Upload t
 - Night owl vs early bird, weekend warrior breakdown
 - Sentiment heuristics, conversation starters, hype energy
 - Burst sequences, longest message, ghosting days, much more
+- Top servers, top DMs (real names from your friends list), DMs vs servers split
+- Hour / weekday / month charts and a day-by-day calendar heatmap, in your local time zone
+- Standard emojis, files and GIFs sent, most-shared sites, most-pinged people, year-over-year change
+- English + Spanish stop words for the vocabulary slide
 
 ## 🚀 Getting Started
 

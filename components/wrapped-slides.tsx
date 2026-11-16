@@ -54,6 +54,104 @@ interface DiscordData {
   conversationStarters: number
   ghostingDays: number
   availableYears?: number[]
+  // Added stats (optional so older payloads still render)
+  topServers?: Array<{ name: string; count: number; channels?: number }>
+  topDMs?: Array<{ name: string; count: number; isGroup?: boolean }>
+  topUnicodeEmojis?: Array<{ name: string; count: number }>
+  topDomains?: Array<{ name: string; count: number }>
+  topMentions?: Array<{ name: string; count: number }>
+  dailyCounts?: Array<{ date: string; count: number }>
+  dmMessages?: number
+  groupMessages?: number
+  serverMessages?: number
+  serverCount?: number
+  dmChannelCount?: number
+  attachmentsCount?: number
+  messagesWithAttachments?: number
+  gifCount?: number
+  previousYearMessages?: number
+  timeZone?: string
+}
+
+type Bar = { label: string; tip: string; value: number }
+
+// Minimal animated bar chart (no chart library needed for 7-24 bars)
+function BarChart({ bars }: { bars: Bar[] }) {
+  const max = Math.max(1, ...bars.map((b) => b.value))
+  return (
+    <div className="flex items-stretch gap-1 md:gap-1.5 h-56">
+      {bars.map((bar, index) => {
+        const isPeak = bar.value === max
+        return (
+          <div
+            key={index}
+            className="flex-1 min-w-0 flex flex-col"
+            title={`${bar.tip}: ${bar.value.toLocaleString()}`}
+          >
+            <div className="flex-1 flex items-end">
+              <motion.div
+                initial={{ height: 0 }}
+                animate={{ height: `${Math.max(1, (bar.value / max) * 100)}%` }}
+                transition={{ delay: 0.15 + index * 0.02, duration: 0.5, ease: "easeOut" }}
+                className={`w-full rounded-t ${isPeak
+                  ? "bg-gradient-to-t from-red-500 to-orange-400"
+                  : "bg-red-900/60"}`}
+              />
+            </div>
+            <span className={`h-5 pt-1 text-center text-[10px] md:text-xs truncate ${isPeak ? "text-red-400 font-bold" : "text-gray-500"}`}>
+              {bar.label}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+// GitHub-style calendar: one square per day of the year, darker = quieter
+function YearHeatmap({ year, days }: { year: number; days: Array<{ date: string; count: number }> }) {
+  const DAY_MS = 86_400_000
+  const CELL = 14
+  const counts = new Map(days.map((d) => [d.date, d.count]))
+  const max = Math.max(1, ...days.map((d) => d.count))
+  const start = Date.UTC(year, 0, 1)
+  const startDow = new Date(start).getUTCDay()
+
+  const cells: Array<{ x: number; y: number; date: string; count: number }> = []
+  const monthLabels: Array<{ x: number; label: string }> = []
+  for (let i = 0; i < 366; i++) {
+    const day = new Date(start + i * DAY_MS)
+    if (day.getUTCFullYear() !== year) break
+    const slot = i + startDow
+    const col = Math.floor(slot / 7)
+    const date = day.toISOString().slice(0, 10)
+    if (day.getUTCDate() === 1) monthLabels.push({ x: col * CELL, label: MONTH_SHORT[day.getUTCMonth()] })
+    cells.push({ x: col * CELL, y: (slot % 7) * CELL + 16, date, count: counts.get(date) ?? 0 })
+  }
+
+  return (
+    <svg viewBox={`0 0 ${54 * CELL} ${7 * CELL + 16}`} className="w-full h-auto" role="img" aria-label={`Messages per day in ${year}`}>
+      {monthLabels.map((m) => (
+        <text key={m.label} x={m.x} y={10} fontSize={10} fill="#6b7280">{m.label}</text>
+      ))}
+      {cells.map((cell) => (
+        <rect
+          key={cell.date}
+          x={cell.x}
+          y={cell.y}
+          width={CELL - 2}
+          height={CELL - 2}
+          rx={2}
+          fill={cell.count === 0 ? "#27272a" : "#ef4444"}
+          fillOpacity={cell.count === 0 ? 1 : 0.25 + 0.75 * Math.sqrt(cell.count / max)}
+        >
+          <title>{`${cell.date}: ${cell.count.toLocaleString()} messages`}</title>
+        </rect>
+      ))}
+    </svg>
+  )
 }
 
 // Smart number formatter - scales text size based on number length
@@ -126,6 +224,35 @@ function createSlides(data: DiscordData) {
     description: `That's ${compactNumber(Math.round(data.totalMessages / data.daysActive))} messages per active day!`,
     funFact: data.totalMessages > 100000 ? "You're in the top 1% of chatters!" : null,
   })
+
+  // Year over year
+  const previousYearMessages = data.previousYearMessages ?? 0
+  if (!isAllTime && previousYearMessages > 0) {
+    const change = Math.round(((data.totalMessages - previousYearMessages) / previousYearMessages) * 100)
+    slides.push({
+      id: "year-over-year",
+      type: "stat",
+      icon: BarChart3,
+      stat: `${change >= 0 ? "+" : ""}${change.toLocaleString()}%`,
+      statSize: "text-6xl md:text-8xl",
+      label: `vs ${numericYear - 1}`,
+      description: `${compactNumber(previousYearMessages)} messages in ${numericYear - 1} → ${compactNumber(data.totalMessages)} in ${numericYear}`,
+      funFact: change >= 50 ? "Chattier than ever!" : change <= -50 ? "A quieter year." : null,
+    })
+  }
+
+  // All-time: messages per year
+  const yearEntries = Object.entries(data.yearlyDistribution ?? {})
+  if (isAllTime && yearEntries.length > 1) {
+    slides.push({
+      id: "yearly-chart",
+      type: "chart",
+      icon: BarChart3,
+      title: "Your Discord Through the Years",
+      bars: yearEntries.map(([year, count]) => ({ label: `'${year.slice(2)}`, tip: year, value: count })),
+      description: `${yearEntries.length} years of messages`,
+    })
+  }
 
   // Total words with dynamic sizing
   if (data.totalWords > 0) {
@@ -201,6 +328,23 @@ function createSlides(data: DiscordData) {
     funFact: data.peakHour >= 0 && data.peakHour < 5 ? "Night owl detected! 🦉" : null,
   })
 
+  // Hour-by-hour chart
+  const hourValues = Array.from({ length: 24 }, (_, hour) => data.hourlyDistribution?.[String(hour)] ?? 0)
+  if (hourValues.some((value) => value > 0)) {
+    slides.push({
+      id: "hourly-chart",
+      type: "chart",
+      icon: Clock,
+      title: "Your Day on Discord",
+      bars: hourValues.map((value, hour) => ({
+        label: hour % 3 === 0 ? formatHour(hour).replace(/ ([AP])M/, (_, half) => half.toLowerCase()) : "",
+        tip: formatHour(hour),
+        value,
+      })),
+      description: data.timeZone ? `Messages by hour, in your time zone (${data.timeZone})` : "Messages by hour of the day",
+    })
+  }
+
   // Night owl vs Early bird
   const nightOwlPercent = Math.round((data.nightOwlCount / data.totalMessages) * 100)
   const earlyBirdPercent = Math.round((data.earlyBirdCount / data.totalMessages) * 100)
@@ -243,6 +387,25 @@ function createSlides(data: DiscordData) {
     })
   }
 
+  // Day-of-week chart (Monday first)
+  const weekdayOrder = [1, 2, 3, 4, 5, 6, 0]
+  const weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+  const weekdayValues = weekdayOrder.map((day) => data.dayOfWeekDistribution?.[String(day)] ?? 0)
+  if (weekdayValues.some((value) => value > 0)) {
+    slides.push({
+      id: "weekday-chart",
+      type: "chart",
+      icon: Calendar,
+      title: "Your Week on Discord",
+      bars: weekdayOrder.map((day, index) => ({
+        label: weekdayNames[day].slice(0, 3),
+        tip: weekdayNames[day],
+        value: weekdayValues[index],
+      })),
+      description: `${data.peakDay}s are your day: ${compactNumber(data.peakDayCount)} messages`,
+    })
+  }
+
   // Top channels
   if (data.topChannels.length > 0) {
     slides.push({
@@ -251,7 +414,55 @@ function createSlides(data: DiscordData) {
       title: "Your Hangout Spots",
       icon: Target,
       data: data.topChannels.slice(0, 5),
-      description: `#${data.topChannels[0].name.replace(/[^\w\s-]/g, '')} is your home`,
+      description: `${data.topChannels[0].name} is your home`,
+    })
+  }
+
+  // Top servers
+  const topServers = data.topServers ?? []
+  if (topServers.length > 1) {
+    slides.push({
+      id: "top-servers",
+      type: "list",
+      title: "Your Top Servers",
+      icon: Award,
+      data: topServers.slice(0, 5),
+      description: data.serverCount
+        ? `You chatted in ${data.serverCount} server${data.serverCount === 1 ? "" : "s"}`
+        : `${topServers[0].name} is where you live`,
+    })
+  }
+
+  // Top DMs
+  const topDMs = data.topDMs ?? []
+  if (topDMs.length > 0) {
+    slides.push({
+      id: "top-dms",
+      type: "list",
+      title: "Your Inner Circle",
+      icon: Heart,
+      data: topDMs.slice(0, 5),
+      description: data.dmChannelCount
+        ? `You DMed ${data.dmChannelCount} different ${data.dmChannelCount === 1 ? "person" : "people"}`
+        : `${topDMs[0].name} hears from you the most`,
+    })
+  }
+
+  // DMs vs servers
+  const privateMessages = (data.dmMessages ?? 0) + (data.groupMessages ?? 0)
+  const serverMessages = data.serverMessages ?? 0
+  if (privateMessages > 0 && serverMessages > 0) {
+    const privatePercent = Math.round((privateMessages / (privateMessages + serverMessages)) * 100)
+    slides.push({
+      id: "dm-vs-server",
+      type: "progress",
+      icon: MessageCircle,
+      stat: `${privatePercent}%`,
+      statSize: "text-7xl md:text-9xl",
+      label: "Sent in DMs",
+      progress: privatePercent,
+      description: `${compactNumber(privateMessages)} in DMs & group chats vs ${compactNumber(serverMessages)} in servers`,
+      funFact: privatePercent >= 60 ? "You keep it personal." : privatePercent <= 25 ? "A true server regular." : null,
     })
   }
 
@@ -263,10 +474,11 @@ function createSlides(data: DiscordData) {
       return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     }
 
+    // "YYYY-MM-DD" parses as UTC midnight, so format in UTC to keep the same day
     const date = new Date(dateInput)
     return isNaN(date.getTime())
       ? dateInput
-      : date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+      : date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
   }
 
   // Busiest day
@@ -284,16 +496,43 @@ function createSlides(data: DiscordData) {
     })
   }
 
+  // Calendar heatmap (single year only)
+  const dailyCounts = data.dailyCounts ?? []
+  if (!isAllTime && dailyCounts.length > 0) {
+    slides.push({
+      id: "calendar-heatmap",
+      type: "heatmap",
+      icon: Calendar,
+      title: `Your ${yearLabel}, Day by Day`,
+      year: numericYear,
+      days: dailyCounts,
+      description: `${data.daysActive} active days • longest streak ${data.longestStreak} day${data.longestStreak === 1 ? "" : "s"}`,
+    })
+  }
+
+  // Month-by-month chart (single year only)
+  const monthValues = Array.from({ length: 12 }, (_, month) => data.monthlyDistribution?.[String(month + 1)] ?? 0)
+  if (!isAllTime && monthValues.some((value) => value > 0)) {
+    slides.push({
+      id: "monthly-chart",
+      type: "chart",
+      icon: BarChart3,
+      title: `Your ${yearLabel}, Month by Month`,
+      bars: monthValues.map((value, month) => ({ label: MONTH_SHORT[month], tip: MONTH_SHORT[month], value })),
+      description: "Messages sent each month",
+    })
+  }
+
   // Most active month
   if (data.mostActiveMonth) {
     const parsedMonth = new Date(data.mostActiveMonth + "-01")
     const monthValid = !Number.isNaN(parsedMonth.getTime())
     const monthName = monthValid
-      ? parsedMonth.toLocaleDateString('en-US', { month: 'long' })
+      ? parsedMonth.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })
       : data.mostActiveMonth
-    const monthYear = monthValid ? parsedMonth.getFullYear() : null
+    const monthYear = monthValid ? parsedMonth.getUTCFullYear() : null
     const monthLabel = monthValid
-      ? parsedMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      ? parsedMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
       : data.mostActiveMonth
     slides.push({
       id: "most-active-month",
@@ -409,6 +648,50 @@ function createSlides(data: DiscordData) {
     })
   }
 
+  // Favourite sites
+  const topDomains = data.topDomains ?? []
+  if (topDomains.length > 2) {
+    slides.push({
+      id: "top-domains",
+      type: "list",
+      title: "Sites You Share Most",
+      icon: Link,
+      data: topDomains.slice(0, 5),
+      description: `${topDomains[0].name} is your go-to source`,
+    })
+  }
+
+  // Attachments
+  const attachmentsCount = data.attachmentsCount ?? 0
+  if (attachmentsCount > 20) {
+    const fileStat = formatStat(attachmentsCount)
+    slides.push({
+      id: "attachments",
+      type: "stat",
+      icon: Sparkles,
+      stat: fileStat.value,
+      statSize: fileStat.size,
+      label: "Files Shared",
+      description: `Images, videos and files across ${compactNumber(data.messagesWithAttachments ?? 0)} messages`,
+      funFact: attachmentsCount > 2000 ? "A walking camera roll!" : null,
+    })
+  }
+
+  // GIFs
+  const gifCount = data.gifCount ?? 0
+  if (gifCount > 20) {
+    const gifStat = formatStat(gifCount)
+    slides.push({
+      id: "gifs",
+      type: "stat",
+      icon: Zap,
+      stat: gifStat.value,
+      statSize: gifStat.size,
+      label: "GIFs Sent",
+      description: "Why type when a GIF says it better?",
+    })
+  }
+
   // Mentions
   if (data.mentionsGiven > 100) {
     const mentionStat = formatStat(data.mentionsGiven)
@@ -423,6 +706,19 @@ function createSlides(data: DiscordData) {
     })
   }
 
+  // Most pinged people
+  const topMentions = data.topMentions ?? []
+  if (topMentions.length > 1) {
+    slides.push({
+      id: "top-mentions",
+      type: "list",
+      title: "Who You Ping Most",
+      icon: AtSign,
+      data: topMentions.slice(0, 5),
+      description: `${topMentions[0].name} can't escape your pings`,
+    })
+  }
+
   // Top emojis
   if (data.topEmojis.length > 0) {
     slides.push({
@@ -432,6 +728,19 @@ function createSlides(data: DiscordData) {
       icon: Smile,
       data: data.topEmojis.slice(0, 5),
       description: `:${data.topEmojis[0].name}: is your signature`,
+    })
+  }
+
+  // Top standard emojis
+  const topUnicodeEmojis = data.topUnicodeEmojis ?? []
+  if (topUnicodeEmojis.length > 0) {
+    slides.push({
+      id: "top-unicode-emojis",
+      type: "list",
+      title: "Your Favorite Emojis",
+      icon: Smile,
+      data: topUnicodeEmojis.slice(0, 5),
+      description: `${compactNumber(data.totalEmojis)} emojis and emotes sent in total`,
     })
   }
 
@@ -517,7 +826,7 @@ function createSlides(data: DiscordData) {
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     }
     const date = new Date(dateStr)
-    return isNaN(date.getTime()) ? dateStr : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    return isNaN(date.getTime()) ? dateStr : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
   }
 
   slides.push({
@@ -767,6 +1076,41 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.8 }}
+                    className="text-base text-gray-400 text-center pt-2"
+                  >
+                    {slide.description}
+                  </motion.p>
+                </div>
+              </Card>
+            )}
+
+            {/* Chart slides (bar charts and the calendar heatmap) */}
+            {(slide.type === "chart" || slide.type === "heatmap") && (
+              <Card className="bg-zinc-900/80 border-red-900/30 p-6 md:p-10 backdrop-blur-md">
+                <div className="space-y-6">
+                  <motion.div
+                    initial={{ x: -20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    className="flex items-center gap-4"
+                  >
+                    {slide.icon && <slide.icon className="w-10 h-10 text-red-500" />}
+                    <h2 className="text-3xl md:text-4xl font-bold text-white">{slide.title}</h2>
+                  </motion.div>
+                  {slide.type === "chart" ? (
+                    <BarChart bars={slide.bars} />
+                  ) : (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.2, duration: 0.6 }}
+                    >
+                      <YearHeatmap year={slide.year} days={slide.days} />
+                    </motion.div>
+                  )}
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.6 }}
                     className="text-base text-gray-400 text-center pt-2"
                   >
                     {slide.description}
