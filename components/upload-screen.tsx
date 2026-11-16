@@ -5,6 +5,7 @@ import { motion } from "framer-motion"
 import { Upload, FileArchive, Loader2, AlertCircle, CheckCircle2, Github } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { scanArchive, type ArchiveScan } from "@/lib/client-db"
+import { KawarpBackground } from "@/components/kawarp-background"
 
 interface UploadScreenProps {
   onScanned: (scan: ArchiveScan, file: File) => void
@@ -65,11 +66,12 @@ export function UploadScreen({ onScanned }: UploadScreenProps) {
 
   if (isProcessing) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center p-4">
+      <div className="relative min-h-screen overflow-hidden bg-black flex items-center justify-center p-4">
+        <KawarpBackground />
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-md"
+          className="relative z-10 w-full max-w-md"
         >
           <Card className="bg-zinc-900/80 border-red-900/30 p-8 backdrop-blur-md">
             <div className="text-center space-y-6">
@@ -106,11 +108,7 @@ export function UploadScreen({ onScanned }: UploadScreenProps) {
 
   return (
     <div className="relative min-h-screen bg-black flex items-center justify-center p-4">
-      {/* Background effects */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-20 left-10 w-72 h-72 bg-red-600/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-red-800/10 rounded-full blur-3xl" />
-      </div>
+      <KawarpBackground />
 
       <div className="absolute top-6 right-6 z-20">
         <a
