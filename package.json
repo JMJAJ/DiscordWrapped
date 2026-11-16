@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "copy:duckdb": "node scripts/copy-duckdb.js",
+    "postinstall": "node scripts/copy-duckdb.js",
+    "prebuild": "node scripts/copy-duckdb.js",
+    "predev": "node scripts/copy-duckdb.js",
+    "predev:turbo": "node scripts/copy-duckdb.js",
     "build": "next build --webpack",
     "dev": "next dev --webpack",
     "dev:turbo": "next dev --turbopack",

@@ -10,8 +10,18 @@ let conn: duckdb.AsyncDuckDBConnection | null = null
 async function initDuckDB() {
   if (db) return db
 
-  const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles()
-  const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES)
+  // Served from public/duckdb (see scripts/copy-duckdb.js); jsDelivr won't serve the ~35 MB .wasm files
+  const base = `${self.location.origin}/duckdb`
+  const bundle = await duckdb.selectBundle({
+    mvp: {
+      mainModule: `${base}/duckdb-mvp.wasm`,
+      mainWorker: `${base}/duckdb-browser-mvp.worker.js`,
+    },
+    eh: {
+      mainModule: `${base}/duckdb-eh.wasm`,
+      mainWorker: `${base}/duckdb-browser-eh.worker.js`,
+    },
+  })
 
   const worker_url = URL.createObjectURL(
     new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
@@ -19,13 +29,32 @@ async function initDuckDB() {
 
   const worker = new Worker(worker_url)
   const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)
-  db = new duckdb.AsyncDuckDB(logger, worker)
-  await db.instantiate(bundle.mainModule, bundle.pthreadWorker)
-
-  URL.revokeObjectURL(worker_url)
-
-  conn = await db.connect()
+  const instance = new duckdb.AsyncDuckDB(logger, worker)
+  try {
+    await withTimeout(
+      instance.instantiate(bundle.mainModule, bundle.pthreadWorker),
+      120_000,
+      'Loading the database engine timed out. Check your connection and reload the page.'
+    )
+    conn = await instance.connect()
+  } catch (err) {
+    worker.terminate()
+    throw err
+  } finally {
+    URL.revokeObjectURL(worker_url)
+  }
+  db = instance
   return db
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value) },
+      (err) => { clearTimeout(timer); reject(err) }
+    )
+  })
 }
 
 function postProgress(stage: string, percent: number) {
