@@ -5,6 +5,7 @@ import { YearSelector } from "@/components/year-selector"
 import { useEffect, useState } from "react"
 import { SourceSelector } from "@/components/source-selector"
 import { processAndAnalyze, type ArchiveScan, type ImportSources } from "@/lib/client-db"
+import { KawarpBackground } from "@/components/kawarp-background"
 
 interface DiscordData {
   totalMessages: number
@@ -217,11 +218,7 @@ export default function DiscordWrapped() {
   if (mode === 'checking') {
     return (
       <div className="relative min-h-screen overflow-hidden bg-black">
-        <div className="absolute inset-0 bg-gradient-to-br from-black via-red-950/20 to-black" />
-        <div className="absolute inset-0 overflow-hidden">
-          <div className="absolute top-20 left-10 w-72 h-72 bg-red-600/10 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute bottom-20 right-10 w-96 h-96 bg-red-800/10 rounded-full blur-3xl animate-pulse" />
-        </div>
+        <KawarpBackground />
         <div className="relative z-10 flex min-h-screen items-center justify-center p-4">
           <div className="text-center space-y-6">
             <div className="relative">
@@ -271,11 +268,7 @@ export default function DiscordWrapped() {
   if (mode === 'loading') {
     return (
       <div className="relative min-h-screen overflow-hidden bg-black">
-        <div className="absolute inset-0 bg-gradient-to-br from-black via-red-950/20 to-black" />
-        <div className="absolute inset-0 overflow-hidden">
-          <div className="absolute top-24 left-16 w-72 h-72 bg-red-600/15 rounded-full blur-3xl" />
-          <div className="absolute bottom-24 right-16 w-96 h-96 bg-red-800/15 rounded-full blur-3xl" />
-        </div>
+        <KawarpBackground />
         <div className="relative z-10 flex min-h-screen items-center justify-center p-4">
           <div className="text-center space-y-6">
             <div className="relative">
@@ -334,7 +327,7 @@ export default function DiscordWrapped() {
   // Error state
   return (
     <div className="relative min-h-screen overflow-hidden bg-black">
-      <div className="absolute inset-0 bg-gradient-to-br from-black via-red-950/20 to-black" />
+      <KawarpBackground />
       <div className="relative z-10 flex min-h-screen items-center justify-center p-4">
         <div className="text-center space-y-4 max-w-2xl">
           <h1 className="text-5xl font-black text-white">Something went wrong</h1>

@@ -2,6 +2,7 @@
 
 import { useMemo } from "react"
 import { Card } from "@/components/ui/card"
+import { KawarpBackground } from "@/components/kawarp-background"
 
 interface YearSelectorProps {
   years: number[]
@@ -28,11 +29,7 @@ export function YearSelector({ years, selectedYear, onSelect, onContinue, onReup
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-black">
-      <div className="absolute inset-0 bg-gradient-to-br from-black via-red-950/30 to-black" />
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-24 left-16 w-60 h-60 bg-red-600/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-24 right-16 w-72 h-72 bg-red-800/20 rounded-full blur-3xl" />
-      </div>
+      <KawarpBackground />
 
       <div className="relative z-10 flex min-h-screen items-center justify-center p-4">
         <div className="w-full max-w-3xl space-y-10">

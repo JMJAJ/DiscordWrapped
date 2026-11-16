@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame, Mic, Headphones, MonitorPlay, Pencil, Terminal, Smartphone, DoorOpen, Gamepad2, CreditCard, ShoppingBag, Coins, Trophy, LayoutGrid } from "lucide-react"
 import { Card } from "@/components/ui/card"
+import { KawarpBackground, KAWARP_PALETTES } from "@/components/kawarp-background"
 
 interface DiscordData {
   year?: number | 'all' | null
@@ -1390,31 +1391,12 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
     }),
   }
 
-  // Random gradient colors for variety
-  const gradients = [
-    "from-red-600/20 via-red-900/10 to-black",
-    "from-orange-600/20 via-red-900/10 to-black",
-    "from-pink-600/20 via-red-900/10 to-black",
-    "from-rose-600/20 via-red-900/10 to-black",
-  ]
-  const gradient = gradients[currentSlide % gradients.length]
+  // Keep the existing slide color cycle in Kawarp's animated source gradient.
+  const backgroundColors = KAWARP_PALETTES[currentSlide % KAWARP_PALETTES.length]
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-black">
-      {/* Animated background */}
-      <motion.div
-        key={currentSlide}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.5 }}
-        className={`absolute inset-0 bg-gradient-to-br ${gradient}`}
-      />
-
-      {/* Floating orbs - Reduced blur for performance */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-10 w-72 h-72 bg-red-600/10 rounded-full blur-2xl animate-pulse" />
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-red-800/10 rounded-full blur-2xl animate-pulse" />
-      </div>
+      <KawarpBackground colors={backgroundColors} />
 
       {/* Main content */}
       <div className="relative z-10 flex min-h-screen items-center justify-center px-4 pt-20 pb-48">

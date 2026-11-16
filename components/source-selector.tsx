@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { ArrowRight, Check, CreditCard, Gamepad2, MessageSquare, Mic, type LucideIcon } from "lucide-react"
 import type { ArchiveScan, ImportSources } from "@/lib/client-db"
+import { KawarpBackground } from "@/components/kawarp-background"
 
 interface SourceSelectorProps {
   scan: ArchiveScan
@@ -104,10 +105,7 @@ export function SourceSelector({ scan, initial, onContinue, onReupload }: Source
 
   return (
     <div className="relative min-h-screen bg-black text-white">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute top-20 left-10 h-72 w-72 rounded-full bg-red-600/10 blur-3xl" />
-        <div className="absolute bottom-20 right-10 h-96 w-96 rounded-full bg-red-800/10 blur-3xl" />
-      </div>
+      <KawarpBackground />
 
       <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-10 md:px-6">
         <ol className="flex flex-wrap items-center gap-3 font-mono text-[13px]">
