@@ -144,8 +144,87 @@ const NUMERIC_CHANNEL_TYPES: Record<number, string> = {
 }
 
 interface WorkerRequest {
+  action?: 'scan' | 'process'
   file: File
   targetYear?: number | 'all' | null
+  sources?: Partial<Sources>
+}
+
+// Optional parts of the export the user can leave out (messages are always read)
+interface Sources {
+  activity: boolean // voice, reactions, edits, commands, app opens
+  games: boolean    // play time per game
+  money: boolean    // payments, Orbs, Quests
+}
+
+const normalizeSources = (raw?: Partial<Sources> | null): Sources => ({
+  activity: raw?.activity !== false,
+  games: raw?.games !== false,
+  money: raw?.money !== false,
+})
+
+const fileKey = (file: File) => `${file.name}:${file.size}:${file.lastModified}`
+
+// The opened ZIP is kept between the scan and the import that follows it, then dropped
+let zipCache: { key: string; contents: JSZip } | null = null
+
+async function openArchive(file: File): Promise<JSZip> {
+  const key = fileKey(file)
+  if (zipCache && zipCache.key === key) return zipCache.contents
+  zipCache = null
+  postProgress('Reading ZIP file...', 10)
+  const contents = await new JSZip().loadAsync(file)
+  zipCache = { key, contents }
+  return contents
+}
+
+const entrySize = (entry: JSZip.JSZipObject): number => Number((entry as any)?._data?.uncompressedSize) || 0
+// Multi-GB entries can carry a wrapped 32-bit uncompressed size, so size those by their zipped bytes
+const entryZippedSize = (entry: JSZip.JSZipObject): number => Number((entry as any)?._data?.compressedSize) || 0
+
+// Quick look at what the export contains, so the user can choose what to import
+async function scanArchive(file: File): Promise<Record<string, any>> {
+  postProgress('Opening ZIP file...', 20)
+  const contents = await openArchive(file)
+  postProgress('Looking at what is inside...', 70)
+
+  let channels = 0
+  let messageBytes = 0
+  let activityFiles = 0
+  let activityBytes = 0
+  contents.forEach((path, entry) => {
+    if (entry.dir) return
+    if (/(^|\/)messages\/[^/]+\/messages\.json$/i.test(path)) {
+      channels++
+      messageBytes += entrySize(entry)
+    } else if (/(^|\/)activity\/[^/]+\/events-[^/]*\.json$/i.test(path)) {
+      activityFiles++
+      activityBytes += entryZippedSize(entry)
+    }
+  })
+
+  if (channels === 0) {
+    zipCache = null
+    throw new Error('No message files found in ZIP. Make sure this is a Discord data export.')
+  }
+
+  const user = await readJsonEntry(contents, /(^|\/)account\/user\.json$/i)
+  const gameCount = Array.isArray(user?.user_activity_application_statistics)
+    ? user.user_activity_application_statistics.filter((entry: any) => Number(entry?.total_duration) > 0).length
+    : 0
+  const payments = recordsOf(await readJsonEntry(contents, /(^|\/)discord_billing\/payments\.json$/i)).length
+  const orbMoves = recordsOf(
+    await readJsonEntry(contents, /(^|\/)discord_virtual_currency\/coin_transactions\.json$/i)
+  ).length
+  const quests = recordsOf(await readJsonEntry(contents, /(^|\/)ads\/quests_user_status\.json$/i)).length
+
+  return {
+    fileName: file.name,
+    messages: { channels, bytes: messageBytes },
+    activity: { files: activityFiles, zippedBytes: activityBytes },
+    games: { count: gameCount },
+    money: { payments, orbMoves, quests },
+  }
 }
 
 // State kept between requests so switching years does not re-read the ZIP
@@ -181,7 +260,13 @@ ctx.onmessage = async (e: MessageEvent<File | WorkerRequest>) => {
       throw new Error('Invalid file provided to worker')
     }
 
-    const stats = await processAndAnalyze(file, explicitYear)
+    if (payload?.action === 'scan') {
+      const scan = await scanArchive(file)
+      ctx.postMessage({ type: 'done', stats: scan })
+      return
+    }
+
+    const stats = await processAndAnalyze(file, explicitYear, normalizeSources(payload?.sources))
     ctx.postMessage({ type: 'done', stats })
   } catch (err: any) {
     console.error('Worker error:', err)
@@ -194,7 +279,8 @@ ctx.onmessage = async (e: MessageEvent<File | WorkerRequest>) => {
 
 async function ingestArchive(
   conn: duckdb.AsyncDuckDBConnection,
-  file: File
+  file: File,
+  sources: Sources
 ): Promise<Omit<LoadedArchive, 'key'>> {
   await conn.query(`DROP TABLE IF EXISTS messages`)
   await conn.query(`DROP TABLE IF EXISTS all_messages`)
@@ -223,9 +309,7 @@ async function ingestArchive(
       )
     `)
 
-  postProgress('Reading ZIP file...', 10)
-  let zip = new JSZip()
-  let contents = await zip.loadAsync(file)
+  const contents = await openArchive(file)
 
   postProgress('Finding message files...', 12)
   const messageFiles: string[] = []
@@ -532,25 +616,27 @@ async function ingestArchive(
   // Payments, Orbs and Quests (small JSON files; optional)
   let activityEvents = 0
   try {
-    activityEvents += await ingestAccountExtras(conn, contents)
+    if (sources.money) activityEvents += await ingestAccountExtras(conn, contents)
   } catch (err) {
     console.warn('Failed to read payments / orbs / quests', err)
   }
 
   // Activity logs: voice time, reactions, edits, commands... (optional, can be huge)
+  // Game names only exist in these logs, so "games" alone still needs one pass over them
   try {
-    activityEvents += await ingestActivity(conn, contents, gameNames)
+    if (sources.activity || sources.games) {
+      activityEvents += await ingestActivity(conn, contents, gameNames, sources.activity)
+    }
   } catch (err) {
     console.warn('Failed to read the Activity logs; continuing with messages only', err)
   }
 
-  const games: GameStat[] = rawGames
+  const games: GameStat[] = (sources.games ? rawGames : [])
     .sort((a, b) => b.seconds - a.seconds)
     .map((game) => ({ ...game, name: gameNames[game.id] ?? '' }))
 
   // Let the ZIP buffer be collected
-  ; (contents as any) = null
-  ; (zip as any) = null
+  zipCache = null
 
   return { yearCounts, userNames, channelLabels, guildNames, games, activityEvents, orbsBalance }
 }
@@ -727,7 +813,8 @@ const cleanValue = (value: unknown): string => {
 async function ingestActivity(
   conn: duckdb.AsyncDuckDBConnection,
   contents: JSZip,
-  gameNames: Record<string, string>
+  gameNames: Record<string, string>,
+  keepEvents: boolean
 ): Promise<number> {
   const files = (contents.file(/(^|\/)activity\/[^/]+\/events-[^/]*\.json$/i) as JSZip.JSZipObject[])
     .filter((entry) => !entry.dir)
@@ -752,6 +839,7 @@ async function ingestActivity(
       } catch { }
     }
 
+    if (!keepEvents) return
     const typeAt = line.indexOf('"event_type":"')
     if (typeAt < 0) return
     const typeStart = typeAt + 14
@@ -880,15 +968,19 @@ async function ingestActivity(
   return inserted + voiceRows.length
 }
 
-async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Promise<any> {
+async function processAndAnalyze(
+  file: File,
+  explicitYear: number | 'all' | undefined,
+  sources: Sources
+): Promise<any> {
   postProgress('Initializing database...', 5)
   await initDuckDB()
   if (!conn) throw new Error('Database connection failed')
 
-  const key = `${file.name}:${file.size}:${file.lastModified}`
+  const key = `${fileKey(file)}:${sources.activity}:${sources.games}:${sources.money}`
   if (!loaded || loaded.key !== key) {
     loaded = null
-    const result = await ingestArchive(conn, file)
+    const result = await ingestArchive(conn, file, sources)
     loaded = { key, ...result }
   } else {
     postProgress('Reusing loaded archive...', 85)
@@ -968,6 +1060,7 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
     Object.assign(stats, await runActivityQueries(conn, { channelLabels, guildNames }))
   }
   stats.hasActivityData = activityEvents > 0
+  stats.sources = sources
   stats.orbsBalance = orbsBalance
   // Play time in the export is an all-time total per game, not per year
   const namedGames = games.filter((game) => game.name)

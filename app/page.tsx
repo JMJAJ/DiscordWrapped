@@ -3,7 +3,8 @@ import { WrappedSlides } from "@/components/wrapped-slides"
 import { UploadScreen } from "@/components/upload-screen"
 import { YearSelector } from "@/components/year-selector"
 import { useEffect, useState } from "react"
-import { processAndAnalyze } from "@/lib/client-db"
+import { SourceSelector } from "@/components/source-selector"
+import { processAndAnalyze, type ArchiveScan, type ImportSources } from "@/lib/client-db"
 
 interface DiscordData {
   totalMessages: number
@@ -57,11 +58,14 @@ interface DiscordData {
 
 export default function DiscordWrapped() {
   const [data, setData] = useState<DiscordData | null>(null)
-  const [mode, setMode] = useState<'checking' | 'upload' | 'select-year' | 'loading' | 'ready' | 'error'>('checking')
+  const [mode, setMode] = useState<'checking' | 'upload' | 'select-sources' | 'select-year' | 'loading' | 'ready' | 'error'>('checking')
   const [error, setError] = useState<string | null>(null)
   const [availableYears, setAvailableYears] = useState<number[]>([])
   const [selectedYear, setSelectedYear] = useState<number | 'all' | null>(null)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [scan, setScan] = useState<ArchiveScan | null>(null)
+  // Money slides stay off until the user asks for them
+  const [sources, setSources] = useState<ImportSources>({ activity: true, games: true, money: false })
   const [loadingProgress, setLoadingProgress] = useState<{ stage: string; percent: number }>({ stage: '', percent: 0 })
 
   const deriveAvailableYears = (stats: DiscordData) => {
@@ -127,6 +131,33 @@ export default function DiscordWrapped() {
     setMode('select-year')
   }
 
+  // The ZIP was opened and inspected: ask what to import
+  const handleScanned = (result: ArchiveScan, file: File) => {
+    setUploadedFile(file)
+    setScan(result)
+    setMode('select-sources')
+  }
+
+  const handleSourcesContinue = (chosen: ImportSources) => {
+    if (!uploadedFile) return
+    setSources(chosen)
+    setMode('loading')
+    setLoadingProgress({ stage: 'Preparing import...', percent: 5 })
+
+    processAndAnalyze(uploadedFile, (stage, percent) => {
+      setLoadingProgress({ stage, percent })
+    }, { sources: chosen })
+      .then((stats) => {
+        setLoadingProgress({ stage: '', percent: 0 })
+        handleDataReady(stats, uploadedFile)
+      })
+      .catch((err: any) => {
+        console.error(err)
+        setError(err?.message || 'Failed to process Discord data')
+        setMode('error')
+      })
+  }
+
   const handleYearContinue = () => {
     if (selectedYear === null) return
     if (data && data.year === selectedYear) {
@@ -146,7 +177,7 @@ export default function DiscordWrapped() {
 
     processAndAnalyze(uploadedFile, (stage, percent) => {
       setLoadingProgress({ stage, percent })
-    }, { year: target ?? undefined })
+    }, { year: target ?? undefined, sources })
       .then((stats) => {
         setData(stats)
         const years = deriveAvailableYears(stats)
@@ -174,6 +205,7 @@ export default function DiscordWrapped() {
 
   const handleReupload = () => {
     setUploadedFile(null)
+    setScan(null)
     setData(null)
     setAvailableYears([])
     setSelectedYear(null)
@@ -211,6 +243,18 @@ export default function DiscordWrapped() {
         onSelect={handleYearSelect}
         onContinue={handleYearContinue}
         onReupload={handleReupload}
+        onChangeSources={scan ? () => setMode('select-sources') : undefined}
+      />
+    )
+  }
+
+  if (mode === 'select-sources' && scan) {
+    return (
+      <SourceSelector
+        scan={scan}
+        initial={sources}
+        onContinue={handleSourcesContinue}
+        onReupload={handleReupload}
       />
     )
   }
@@ -219,7 +263,7 @@ export default function DiscordWrapped() {
   if (mode === 'upload') {
     return (
       <UploadScreen
-        onDataReady={handleDataReady}
+        onScanned={handleScanned}
       />
     )
   }
@@ -237,7 +281,7 @@ export default function DiscordWrapped() {
             <div className="relative">
               <div className="animate-spin rounded-full h-20 w-20 border-4 border-red-900 border-t-red-500 mx-auto"></div>
             </div>
-            <h1 className="text-4xl font-black text-white">Generating Wrapped...</h1>
+            <h1 className="text-4xl font-black text-white">{data ? 'Generating Wrapped...' : 'Importing your data...'}</h1>
             <div className="mx-auto w-64">
               <div className="w-full bg-zinc-800 rounded-full h-3 overflow-hidden">
                 <div

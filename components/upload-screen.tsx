@@ -4,13 +4,13 @@ import { useState, useCallback } from "react"
 import { motion } from "framer-motion"
 import { Upload, FileArchive, Loader2, AlertCircle, CheckCircle2, Github } from "lucide-react"
 import { Card } from "@/components/ui/card"
-import { processAndAnalyze } from "@/lib/client-db"
+import { scanArchive, type ArchiveScan } from "@/lib/client-db"
 
 interface UploadScreenProps {
-  onDataReady: (data: any, file: File) => void
+  onScanned: (scan: ArchiveScan, file: File) => void
 }
 
-export function UploadScreen({ onDataReady }: UploadScreenProps) {
+export function UploadScreen({ onScanned }: UploadScreenProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [progress, setProgress] = useState({ stage: '', percent: 0 })
@@ -27,18 +27,18 @@ export function UploadScreen({ onDataReady }: UploadScreenProps) {
     setProgress({ stage: 'Starting...', percent: 0 })
 
     try {
-      // Process and analyze the ZIP file
-      const stats = await processAndAnalyze(file, (stage, percent) => {
+      // Only look at what the ZIP contains; the import happens after the user picks sources
+      const scan = await scanArchive(file, (stage, percent) => {
         setProgress({ stage, percent })
       })
 
-      onDataReady(stats, file)
+      onScanned(scan, file)
     } catch (err: any) {
       console.error('Processing error:', err)
       setError(err.message || 'Failed to process Discord data')
       setIsProcessing(false)
     }
-  }, [onDataReady])
+  }, [onScanned])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
