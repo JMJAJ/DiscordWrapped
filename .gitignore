@@ -38,4 +38,6 @@ next-env.d.ts
 *.parquet
 *.db
 discord-wrapped-app.zip
+# DuckDB-WASM runtime, copied from node_modules by scripts/copy-duckdb.js
+/public/duckdb/
 package.zip
