@@ -22,6 +22,8 @@ A Spotify‑inspired, fully client-side recap of your Discord activity. Upload t
 - Hour / weekday / month charts and a day-by-day calendar heatmap, in your local time zone
 - Standard emojis, files and GIFs sent, most-shared sites, most-pinged people, year-over-year change
 - English + Spanish stop words for the vocabulary slide
+- From the `Activity/` logs (streamed, never fully loaded): voice hours and top voice hangouts, streams watched, favorite reactions, edits and deletions, slash commands, mobile app opens, servers joined and left
+- From `Account/user.json`: most played games (all-time totals; names are recovered from the activity log)
 
 ## 🚀 Getting Started
 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame } from "lucide-react"
+import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame, Mic, Headphones, MonitorPlay, Pencil, Terminal, Smartphone, DoorOpen, Gamepad2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 
@@ -71,6 +71,36 @@ interface DiscordData {
   gifCount?: number
   previousYearMessages?: number
   timeZone?: string
+  // From the Activity logs and Account data (missing in exports without them)
+  hasActivityData?: boolean
+  voiceSeconds?: number
+  voiceSessions?: number
+  longestVoiceSeconds?: number
+  voiceDays?: number
+  topVoiceChannels?: Array<{ name: string; seconds: number; sessions: number }>
+  streamWatchSeconds?: number
+  streamShareSeconds?: number
+  reactionsCount?: number
+  topReactions?: Array<{ name: string; id: string; count: number; isAnimated?: boolean }>
+  deletedCount?: number
+  commandsCount?: number
+  topCommands?: Array<{ name: string; count: number }>
+  appOpens?: number
+  appOpensByPlatform?: Array<{ name: string; count: number }>
+  serversJoined?: number
+  serversLeft?: number
+  topGames?: Array<{ name: string; seconds: number; lastPlayed?: string }>
+  gamesPlayed?: number
+  gamesTotalSeconds?: number
+}
+
+// 5400 -> "1h 30m", 400000 -> "111h"
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.round((seconds % 3600) / 60)
+  if (hours >= 100) return `${hours.toLocaleString()}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${Math.max(1, minutes)}m`
 }
 
 type Bar = { label: string; tip: string; value: number }
@@ -814,6 +844,157 @@ function createSlides(data: DiscordData) {
     })
   }
 
+  // ---- Activity log slides (voice, reactions, edits, commands, app opens) ----
+
+  // Voice time
+  const voiceSeconds = data.voiceSeconds ?? 0
+  if (voiceSeconds >= 3600) {
+    const voiceHours = Math.round(voiceSeconds / 3600)
+    const voiceStat = formatStat(voiceHours)
+    const voiceDays = data.voiceDays ?? 0
+    slides.push({
+      id: "voice-time",
+      type: "stat",
+      icon: Mic,
+      stat: `${voiceStat.value}h`,
+      statSize: voiceStat.size,
+      label: "In Voice Chat",
+      description: `${(data.voiceSessions ?? 0).toLocaleString()} sessions on ${voiceDays.toLocaleString()} day${voiceDays === 1 ? "" : "s"} • longest: ${formatDuration(data.longestVoiceSeconds ?? 0)}`,
+      funFact: voiceHours >= 48 ? `That's ${(voiceHours / 24).toFixed(voiceHours >= 240 ? 0 : 1)} full days of talking!` : null,
+    })
+  }
+
+  // Where the voice hours went
+  const topVoiceChannels = data.topVoiceChannels ?? []
+  if (topVoiceChannels.length > 1) {
+    slides.push({
+      id: "top-voice",
+      type: "list",
+      title: "Your Voice Hangouts",
+      icon: Headphones,
+      data: topVoiceChannels.slice(0, 5).map((place) => ({
+        name: place.name,
+        count: place.seconds,
+        value: formatDuration(place.seconds),
+      })),
+      description: `${topVoiceChannels[0].name} heard you the most`,
+    })
+  }
+
+  // Streams watched
+  const streamWatchSeconds = data.streamWatchSeconds ?? 0
+  if (streamWatchSeconds >= 3600) {
+    slides.push({
+      id: "streams-watched",
+      type: "stat",
+      icon: MonitorPlay,
+      stat: formatDuration(streamWatchSeconds),
+      statSize: "text-6xl md:text-8xl",
+      label: "Watching Streams",
+      description: (data.streamShareSeconds ?? 0) >= 600
+        ? `Plus ${formatDuration(data.streamShareSeconds ?? 0)} sharing your own screen`
+        : "Front-row seat on your friends' screens",
+    })
+  }
+
+  // Reactions
+  const topReactions = data.topReactions ?? []
+  if (topReactions.length > 1 && (data.reactionsCount ?? 0) > 20) {
+    slides.push({
+      id: "top-reactions",
+      type: "list",
+      title: "Your Go-To Reactions",
+      icon: Smile,
+      data: topReactions.slice(0, 5),
+      description: `${compactNumber(data.reactionsCount ?? 0)} reactions added`,
+    })
+  }
+
+  // Edits and deletions
+  if (data.editsCount > 50) {
+    const editStat = formatStat(data.editsCount)
+    const editPercent = Math.round((data.editsCount / data.totalMessages) * 100)
+    const deleted = data.deletedCount ?? 0
+    slides.push({
+      id: "edits",
+      type: "stat",
+      icon: Pencil,
+      stat: editStat.value,
+      statSize: editStat.size,
+      label: "Messages Edited",
+      description: !isAllTime && editPercent >= 1
+        ? `${editPercent}% of your messages needed a second take`
+        : "Nobody gets it right the first time",
+      funFact: deleted > 20 ? `...and ${compactNumber(deleted)} deleted. We saw nothing.` : null,
+    })
+  }
+
+  // Slash commands
+  const topCommands = data.topCommands ?? []
+  if (topCommands.length > 1 && (data.commandsCount ?? 0) > 10) {
+    slides.push({
+      id: "top-commands",
+      type: "list",
+      title: "Your Favorite Commands",
+      icon: Terminal,
+      data: topCommands.slice(0, 5),
+      description: `${compactNumber(data.commandsCount ?? 0)} bot commands used`,
+    })
+  }
+
+  // App opens
+  const appOpens = data.appOpens ?? 0
+  if (appOpens > 50) {
+    const openStat = formatStat(appOpens)
+    const platforms = data.appOpensByPlatform ?? []
+    const mainPlatform = platforms[0]
+    const platformShare = mainPlatform ? Math.round((mainPlatform.count / appOpens) * 100) : 0
+    // Discord mostly logs this event on phones, so say so when that's all there is
+    const mobileOnly = platforms.length > 0 && platforms.every((p) => /android|ios/i.test(p.name))
+    slides.push({
+      id: "app-opens",
+      type: "stat",
+      icon: Smartphone,
+      stat: openStat.value,
+      statSize: openStat.size,
+      label: mobileOnly ? "Times You Opened Discord on Your Phone" : "Times You Opened Discord",
+      description: `About ${Math.max(1, Math.round(appOpens / Math.max(1, data.daysActive)))} times per active day`,
+      funFact: mainPlatform && platformShare < 100 ? `${platformShare}% of them on ${mainPlatform.name}` : null,
+    })
+  }
+
+  // Servers joined / left
+  const serversJoined = data.serversJoined ?? 0
+  if (serversJoined > 3) {
+    const serversLeft = data.serversLeft ?? 0
+    slides.push({
+      id: "servers-joined",
+      type: "stat",
+      icon: DoorOpen,
+      stat: `+${serversJoined.toLocaleString()}`,
+      statSize: "text-7xl md:text-9xl",
+      label: "Servers Joined",
+      description: serversLeft > 0 ? `...and you walked out of ${serversLeft.toLocaleString()}` : "Always room for one more",
+    })
+  }
+
+  // Games (the export only has all-time totals)
+  const topGames = data.topGames ?? []
+  if (topGames.length > 1) {
+    slides.push({
+      id: "top-games",
+      type: "list",
+      title: isAllTime ? "Your Most Played Games" : "Most Played Games (All Time)",
+      icon: Gamepad2,
+      data: topGames.slice(0, 5).map((game) => ({
+        name: game.name,
+        count: game.seconds,
+        value: formatDuration(game.seconds),
+      })),
+      description: `${formatDuration(data.gamesTotalSeconds ?? 0)} across ${(data.gamesPlayed ?? 0).toLocaleString()} games, as seen by Discord`,
+    })
+  }
+
   // Summary card - Spotify style
   const totalSentimentCalc = data.sentimentPositive + data.sentimentNegative
   const positivePercentCalc = totalSentimentCalc > 0 ? Math.round((data.sentimentPositive / totalSentimentCalc) * 100) : 50
@@ -1067,7 +1248,7 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                               </span>
                             )}
                           </div>
-                          <span className="text-lg font-bold text-red-400 whitespace-nowrap">{compactNumber(item.count)}</span>
+                          <span className="text-lg font-bold text-red-400 whitespace-nowrap">{item.value ?? compactNumber(item.count)}</span>
                         </motion.div>
                       )
                     })}
