@@ -157,6 +157,7 @@ interface LoadedArchive {
   guildNames: Record<string, string>
   games: GameStat[]
   activityEvents: number
+  orbsBalance: number | null
 }
 
 interface GameStat {
@@ -238,12 +239,16 @@ async function ingestArchive(
   let selfId = ''
   const userNames: Record<string, string> = {}
   const gameNames: Record<string, string> = {}
+  let orbsBalance: number | null = null
   const rawGames: Array<{ id: string; seconds: number; lastPlayed: string }> = []
   try {
     const userFiles = contents.file(/(^|\/)account\/user\.json$/i) as JSZip.JSZipObject[]
     if (userFiles.length > 0) {
       const user = JSON.parse(await userFiles[0].async('string'))
       if (user?.id) selfId = String(user.id)
+      if (Number.isFinite(Number(user?.current_orbs_balance)) && user?.current_orbs_balance !== null) {
+        orbsBalance = Number(user.current_orbs_balance)
+      }
       // All-time play time per application (ids only; names come from elsewhere)
       if (Array.isArray(user?.user_activity_application_statistics)) {
         for (const entry of user.user_activity_application_statistics) {
@@ -524,10 +529,17 @@ async function ingestArchive(
     throw new Error("No messages found in your Discord data.")
   }
 
-  // Activity logs: voice time, reactions, edits, commands... (optional, can be huge)
+  // Payments, Orbs and Quests (small JSON files; optional)
   let activityEvents = 0
   try {
-    activityEvents = await ingestActivity(conn, contents, gameNames)
+    activityEvents += await ingestAccountExtras(conn, contents)
+  } catch (err) {
+    console.warn('Failed to read payments / orbs / quests', err)
+  }
+
+  // Activity logs: voice time, reactions, edits, commands... (optional, can be huge)
+  try {
+    activityEvents += await ingestActivity(conn, contents, gameNames)
   } catch (err) {
     console.warn('Failed to read the Activity logs; continuing with messages only', err)
   }
@@ -540,7 +552,89 @@ async function ingestArchive(
   ; (contents as any) = null
   ; (zip as any) = null
 
-  return { yearCounts, userNames, channelLabels, guildNames, games, activityEvents }
+  return { yearCounts, userNames, channelLabels, guildNames, games, activityEvents, orbsBalance }
+}
+
+// ---------------------------------------------------------------------------
+// Payments (Account/user_data_exports/discord_billing), Orbs
+// (.../discord_virtual_currency) and Quests (Ads/quests_user_status.json).
+// Stored as rows of `all_activity` so they get the same per-year filtering.
+// ---------------------------------------------------------------------------
+
+async function readJsonEntry(contents: JSZip, pattern: RegExp): Promise<any | null> {
+  const matches = contents.file(pattern) as JSZip.JSZipObject[]
+  if (matches.length === 0) return null
+  try {
+    return JSON.parse(await matches[0].async('string'))
+  } catch (err) {
+    console.warn(`Failed to parse ${matches[0].name}`, err)
+    return null
+  }
+}
+
+const recordsOf = (parsed: any): any[] =>
+  Array.isArray(parsed) ? parsed : Array.isArray(parsed?.records) ? parsed.records : []
+
+async function ingestAccountExtras(conn: duckdb.AsyncDuckDBConnection, contents: JSZip): Promise<number> {
+  const rows: ActivityRow[] = []
+  const localTs = (raw: unknown): string | null => {
+    const date = parseTimestamp(raw)
+    return date ? toLocalSqlTimestamp(date) : null
+  }
+
+  // Payments. Amounts are in minor units (999 = 9.99). The export's own legend for
+  // the status column does not match the data (in real exports nearly every row is
+  // "1", including years-old ones), so treat whichever of 1 / 2 dominates as "paid".
+  const payments = recordsOf(await readJsonEntry(contents, /(^|\/)discord_billing\/payments\.json$/i))
+  const statusCounts: Record<string, number> = {}
+  for (const payment of payments) {
+    const status = String(payment?.status)
+    statusCounts[status] = (statusCounts[status] ?? 0) + 1
+  }
+  const paidStatus = (statusCounts['2'] ?? 0) > (statusCounts['1'] ?? 0) ? '2' : '1'
+  for (const payment of payments) {
+    if (String(payment?.status) !== paidStatus) continue
+    const ts = localTs(payment.created_at)
+    const amount = Number(payment.amount) - (Number(payment.amount_refunded) || 0)
+    if (!ts || !Number.isFinite(amount) || amount <= 0) continue
+    rows.push({
+      type: 'payment',
+      ts,
+      a: String(payment.currency ?? '').toLowerCase(),
+      b: String(payment.description ?? '').trim(),
+      c: '',
+      n: amount,
+    })
+  }
+
+  // Orbs: positive quantity = earned, negative = spent
+  const coinTransactions = recordsOf(
+    await readJsonEntry(contents, /(^|\/)discord_virtual_currency\/coin_transactions\.json$/i)
+  )
+  for (const transaction of coinTransactions) {
+    const ts = localTs(transaction?.created_at)
+    const quantity = Number(transaction?.quantity)
+    if (!ts || !Number.isFinite(quantity) || quantity === 0) continue
+    rows.push({ type: 'orb', ts, a: '', b: '', c: '', n: quantity })
+  }
+
+  // Quests: one row per milestone so each lands in the year it happened
+  const quests = recordsOf(await readJsonEntry(contents, /(^|\/)ads\/quests_user_status\.json$/i))
+  for (const quest of quests) {
+    const enrolled = localTs(quest?.enrolled_at)
+    const completed = localTs(quest?.completed_at)
+    const claimed = localTs(quest?.claimed_at)
+    if (enrolled) rows.push({ type: 'quest_enrolled', ts: enrolled, a: '', b: '', c: '', n: 0 })
+    if (completed) rows.push({ type: 'quest_completed', ts: completed, a: '', b: '', c: '', n: 0 })
+    if (claimed) {
+      rows.push({ type: 'quest_claimed', ts: claimed, a: '', b: '', c: '', n: Number(quest.orb_quantity_claimed) || 0 })
+    }
+  }
+
+  for (let offset = 0; offset < rows.length; offset += 4000) {
+    await insertActivityBatch(conn, rows.slice(offset, offset + 4000))
+  }
+  return rows.length
 }
 
 // ---------------------------------------------------------------------------
@@ -799,7 +893,7 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
   } else {
     postProgress('Reusing loaded archive...', 85)
   }
-  const { yearCounts, userNames, channelLabels, guildNames, games, activityEvents } = loaded
+  const { yearCounts, userNames, channelLabels, guildNames, games, activityEvents, orbsBalance } = loaded
 
   postProgress('Identifying active year...', 88)
 
@@ -874,6 +968,7 @@ async function processAndAnalyze(file: File, explicitYear?: number | 'all'): Pro
     Object.assign(stats, await runActivityQueries(conn, { channelLabels, guildNames }))
   }
   stats.hasActivityData = activityEvents > 0
+  stats.orbsBalance = orbsBalance
   // Play time in the export is an all-time total per game, not per year
   const namedGames = games.filter((game) => game.name)
   stats.topGames = namedGames.slice(0, 10).map((game) => ({ name: game.name, seconds: game.seconds, lastPlayed: game.lastPlayed }))
@@ -1007,7 +1102,45 @@ async function runActivityQueries(
     GROUP BY A ORDER BY count DESC LIMIT 6
   `)).map((row) => ({ name: String(row.name), count: Number(row.count) }))
 
+  // Money: one total per currency (orb-priced purchases are counted under Orbs)
+  const spending = (await rowsOf(`
+    SELECT A as currency, SUM(N) as amount, COUNT(*) as count
+    FROM activity WHERE Type = 'payment' AND A <> 'discord_orb' AND A <> ''
+    GROUP BY A ORDER BY count DESC, amount DESC
+  `)).map((row) => ({ currency: String(row.currency), amount: Number(row.amount) / 100, count: Number(row.count) }))
+
+  const topPurchases = (await rowsOf(`
+    SELECT B as name, COUNT(*) as count
+    FROM activity WHERE Type = 'payment' AND A <> 'discord_orb' AND B <> ''
+    GROUP BY B ORDER BY count DESC LIMIT 10
+  `)).map((row) => ({ name: String(row.name), count: Number(row.count) }))
+
+  const paymentExtras = await rowsOf(`
+    SELECT
+      COUNT(*) FILTER (WHERE A <> 'discord_orb' AND B ILIKE 'GIFT%') as gifts,
+      COUNT(*) FILTER (WHERE A = 'discord_orb') as orb_purchases
+    FROM activity WHERE Type = 'payment'
+  `)
+
+  const orbs = await rowsOf(`
+    SELECT
+      SUM(N) FILTER (WHERE N > 0) as earned,
+      -SUM(N) FILTER (WHERE N < 0) as spent
+    FROM activity WHERE Type = 'orb'
+  `)
+
   return {
+    spending,
+    paymentsCount: spending.reduce((sum, entry) => sum + entry.count, 0),
+    topPurchases,
+    giftsBought: Number(paymentExtras[0]?.gifts ?? 0),
+    orbPurchases: Number(paymentExtras[0]?.orb_purchases ?? 0),
+    orbsEarned: Math.round(Number(orbs[0]?.earned ?? 0)),
+    orbsSpent: Math.round(Number(orbs[0]?.spent ?? 0)),
+    questsEnrolled: total('quest_enrolled').count,
+    questsCompleted: total('quest_completed').count,
+    questsClaimed: total('quest_claimed').count,
+    questOrbs: Math.round(total('quest_claimed').sum),
     voiceSeconds: Math.round(total('voice').sum),
     voiceSessions: total('voice').count,
     longestVoiceSeconds: Math.round(total('voice').max),

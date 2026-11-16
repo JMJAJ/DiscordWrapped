@@ -24,6 +24,7 @@ A Spotify‑inspired, fully client-side recap of your Discord activity. Upload t
 - English + Spanish stop words for the vocabulary slide
 - From the `Activity/` logs (streamed, never fully loaded): voice hours and top voice hangouts, streams watched, favorite reactions, edits and deletions, slash commands, mobile app opens, servers joined and left
 - From `Account/user.json`: most played games (all-time totals; names are recovered from the activity log)
+- From the billing, virtual currency and quests exports: money spent per currency, most repeated purchases, Orbs earned and spent, Quests completed
 
 ## 🚀 Getting Started
 

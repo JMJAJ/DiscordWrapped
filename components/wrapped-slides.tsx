@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame, Mic, Headphones, MonitorPlay, Pencil, Terminal, Smartphone, DoorOpen, Gamepad2 } from "lucide-react"
+import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame, Mic, Headphones, MonitorPlay, Pencil, Terminal, Smartphone, DoorOpen, Gamepad2, CreditCard, ShoppingBag, Coins, Trophy } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 
@@ -92,6 +92,27 @@ interface DiscordData {
   topGames?: Array<{ name: string; seconds: number; lastPlayed?: string }>
   gamesPlayed?: number
   gamesTotalSeconds?: number
+  // Payments, Orbs and Quests
+  spending?: Array<{ currency: string; amount: number; count: number }>
+  paymentsCount?: number
+  topPurchases?: Array<{ name: string; count: number }>
+  giftsBought?: number
+  orbsEarned?: number
+  orbsSpent?: number
+  orbsBalance?: number | null
+  questsEnrolled?: number
+  questsCompleted?: number
+  questsClaimed?: number
+  questOrbs?: number
+}
+
+// 307.87, "eur" -> "€307.87"
+function formatMoney(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(amount)
+  } catch {
+    return `${amount.toFixed(2)} ${currency.toUpperCase()}`
+  }
 }
 
 // 5400 -> "1h 30m", 400000 -> "111h"
@@ -975,6 +996,81 @@ function createSlides(data: DiscordData) {
       statSize: "text-7xl md:text-9xl",
       label: "Servers Joined",
       description: serversLeft > 0 ? `...and you walked out of ${serversLeft.toLocaleString()}` : "Always room for one more",
+    })
+  }
+
+  // Money spent on Discord (one total per currency)
+  const spending = data.spending ?? []
+  if (spending.length > 0) {
+    const [mainSpend, ...otherSpend] = spending
+    const paymentsCount = data.paymentsCount ?? 0
+    const giftsBought = data.giftsBought ?? 0
+    slides.push({
+      id: "money-spent",
+      type: "stat",
+      icon: CreditCard,
+      stat: formatMoney(mainSpend.amount, mainSpend.currency),
+      statSize: "text-5xl md:text-7xl",
+      label: "Spent on Discord",
+      description: otherSpend.length > 0
+        ? `Plus ${otherSpend.map((entry) => formatMoney(entry.amount, entry.currency)).join(" and ")} • ${paymentsCount} payments in total`
+        : `Across ${paymentsCount} payment${paymentsCount === 1 ? "" : "s"}`,
+      funFact: giftsBought > 0 ? `${giftsBought} of them ${giftsBought === 1 ? "was a gift" : "were gifts"} for someone else 🎁` : null,
+    })
+  }
+
+  // What the money went on
+  const topPurchases = data.topPurchases ?? []
+  if (topPurchases.length > 1) {
+    slides.push({
+      id: "top-purchases",
+      type: "list",
+      title: "What You Bought",
+      icon: ShoppingBag,
+      data: topPurchases.slice(0, 5).map((purchase) => ({
+        name: purchase.name,
+        count: purchase.count,
+        value: `×${purchase.count}`,
+      })),
+      description: "Your most repeated purchases",
+    })
+  }
+
+  // Orbs
+  const orbsEarned = data.orbsEarned ?? 0
+  const orbsSpent = data.orbsSpent ?? 0
+  if (orbsEarned > 0 || orbsSpent > 0) {
+    const orbStat = formatStat(orbsEarned)
+    const orbsBalance = data.orbsBalance
+    slides.push({
+      id: "orbs",
+      type: "stat",
+      icon: Coins,
+      stat: orbStat.value,
+      statSize: orbStat.size,
+      label: "Orbs Earned",
+      description: orbsSpent > 0
+        ? `You spent ${orbsSpent.toLocaleString()} of them`
+        : "And you haven't spent a single one",
+      funFact: typeof orbsBalance === "number" ? `Current balance: ${orbsBalance.toLocaleString()} Orbs` : null,
+    })
+  }
+
+  // Quests
+  const questsCompleted = data.questsCompleted ?? 0
+  if (questsCompleted > 0) {
+    const questStat = formatStat(questsCompleted)
+    const questsEnrolled = data.questsEnrolled ?? 0
+    const questOrbs = data.questOrbs ?? 0
+    slides.push({
+      id: "quests",
+      type: "stat",
+      icon: Trophy,
+      stat: questStat.value,
+      statSize: questStat.size,
+      label: "Quests Completed",
+      description: `Out of ${questsEnrolled.toLocaleString()} accepted • ${(data.questsClaimed ?? 0).toLocaleString()} rewards claimed`,
+      funFact: questOrbs > 0 ? `${questOrbs.toLocaleString()} Orbs came straight from quests` : null,
     })
   }
 
