@@ -82,15 +82,15 @@ pnpm dev          # starts Next.js on http://localhost:3000
 
 Open the site, drop the Discord ZIP into the uploader, choose what to import and pick a year.
 
-### Optional: pre-convert for advanced workflows
+### Optional: export your messages to Parquet
 
-If you want an optimized Parquet copy of your messages (for experimentation), unzip the archive, place the `messages` folders under `Messages/`, then run:
+If you want your messages as one Parquet file to explore with DuckDB, pandas or Polars, unzip the export so that `Messages/c<channel id>/messages.json` sits in the folder you run from, then:
 
 ```bash
 pnpm run convert:parquet
 ```
 
-This step is **not** required for normal usage.
+It writes `Messages/all_messages.parquet` with `ID`, `Timestamp`, `Contents`, `Attachments` and `ChannelId`, using the official [`@duckdb/node-api`](https://www.npmjs.com/package/@duckdb/node-api) client (a dev dependency). The web app does **not** need or read this file.
 
 ## 🌐 Deploying (Vercel example)
 
@@ -124,7 +124,7 @@ The live app ships without data; every visitor uploads their own ZIP and process
 │   └── utils.ts                 # UI helpers
 ├── scripts/
 │   ├── copy-duckdb.js           # Copies DuckDB-WASM into public/duckdb
-│   └── convert-to-parquet.js    # Optional offline preprocessing
+│   └── convert-to-parquet.js    # Optional: messages to one Parquet file
 └── public/, styles/, etc.
 ```
 
@@ -162,6 +162,10 @@ The live app ships without data; every visitor uploads their own ZIP and process
 | Voice, habits or social slides missing | The export has no `Activity/` folder, or "Voice and activity" was unticked. |
 | "Loading the database engine timed out" | `public/duckdb` is missing: run `npm install` (or `node scripts/copy-duckdb.js`) and reload. |
 | Hydration warning about layout | Make sure you are running the latest code (layout sets stable font classes). |
+
+## 🔄 Dependency Updates
+
+[Dependabot](.github/dependabot.yml) opens one grouped pull request every Monday with the minor and patch updates, and a separate pull request for each major update so it can be reviewed on its own. Security fixes arrive as soon as an advisory is published, once **Dependabot security updates** is turned on in the repository's *Settings → Code security*. Run `npm audit` locally to see what is open.
 
 ## 🤝 Contributing
 
