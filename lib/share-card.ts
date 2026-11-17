@@ -2,7 +2,9 @@
 // (no DOM screenshot), so the result is identical on every device and nothing
 // external has to load: no avatars, no CDN emotes, only text and shapes.
 
-export interface ShareCardData {
+import { computeArchetype, type ArchetypeInput } from "@/lib/archetype"
+
+export interface ShareCardData extends Partial<Omit<ArchetypeInput, "totalMessages">> {
   year?: number | "all" | null
   totalMessages: number
   totalWords: number
@@ -212,6 +214,11 @@ export async function renderShareCard(data: ShareCardData, options: ShareCardOpt
   const addHighlight = (label: string, value?: string | null) => {
     if (value && highlights.length < 4) highlights.push({ label, value })
   }
+  const archetype = computeArchetype({
+    nightOwlCount: 0, earlyBirdCount: 0, weekendCount: 0, burstSequences: 0, emojiOnlyCount: 0,
+    ...data,
+  })
+  addHighlight("Archetype", archetype?.title)
   if (!options.hideNames) addHighlight("Top server", data.topServers?.[0]?.name)
   addHighlight("Catchphrase", data.topWords[0] ? `"${data.topWords[0].word}"` : null)
   addHighlight("Top emoji", data.topUnicodeEmojis?.[0]?.name)

@@ -25,7 +25,11 @@ A Spotify‑inspired, fully client-side recap of your Discord activity. Upload t
 - From the `Activity/` logs (streamed, never fully loaded): voice hours and top voice hangouts, streams watched, favorite reactions, edits and deletions, slash commands, mobile app opens, servers joined and left
 - From `Account/user.json`: most played games (all-time totals; names are recovered from the activity log)
 - **Choose what to import** – after the upload a quick scan shows what the ZIP contains and lets you leave out the activity logs, games or money slides (money is off by default)
-- **Chapter navigation** – slides are grouped into chapters (Messages, Rhythm, Places, Style, Emojis, Voice, Extras, Recap) with a progress rail and an "All slides" index
+- **Chapter navigation** – slides are grouped into chapters (Messages, Rhythm, Habits, Places, Social, Style, Emojis, Voice, Extras, Recap) with a progress rail and an "All slides" index
+- **Habits** – hours with Discord open per day and per device (paired `session_start` / `session_end`, one session capped at 24 h), and a lurker index: the share of channel opens that went to channels you never wrote in, plus the channels and servers you check most
+- **Social** – friends added, requests sent and received, invites accepted, friends and blocked users right now, linked accounts, servers where you are admin, servers created, and your own apps and bots
+- **Odds and ends** – captchas, voice messages played, voice effects, deleted messages, and your avatar history with dates read from the avatar ids
+- **Archetype** – a final title such as "Night-Owl Voice Dweller", built only from your own numbers, with the reasons shown; it also appears on the share card
 - **Share as image** – the recap slide can draw a 1080 × 1350 summary card on a canvas to save or copy, with an option to leave your top server off it
 - From the billing, virtual currency and quests exports: money spent per currency, most repeated purchases, Orbs earned and spent, Quests completed
 
