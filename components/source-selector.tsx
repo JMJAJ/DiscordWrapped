@@ -70,7 +70,7 @@ export function SourceSelector({ scan, initial, onContinue, onReupload }: Source
         ? `${plural(scan.activity.files, "log file")} · ${formatBytes(scan.activity.zippedBytes)} zipped`
         : "No activity logs found",
       blurb: "What you did besides typing. Large, so it is read as a stream.",
-      unlocks: ["Voice hours", "Voice hangouts", "Streams watched", "Reactions", "Edits and deletions", "Slash commands", "App opens"],
+      unlocks: ["Voice hours", "Time in Discord", "Lurker index", "Friends added", "Servers you run", "Reactions", "Edits and deletions", "Slash commands", "Odds and ends"],
       available: hasActivity,
     },
     {

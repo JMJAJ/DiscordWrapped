@@ -266,6 +266,32 @@ interface LoadedArchive {
   games: GameStat[]
   activityEvents: number
   orbsBalance: number | null
+  profile: Profile
+}
+
+// Account facts that describe you right now rather than a given year
+interface Profile {
+  friends: number
+  blocked: number
+  connections: string[]
+  apps: OwnApp[]
+  avatars: Avatar[]
+  adminServers: string[]
+}
+
+interface OwnApp {
+  name: string
+  servers: number
+  users: number
+  isBot: boolean
+  verified: boolean
+  created: string | null
+}
+
+interface Avatar {
+  date: string | null
+  animated: boolean
+  image: Blob
 }
 
 interface GameStat {
@@ -354,6 +380,7 @@ async function ingestArchive(
   const gameNames: Record<string, string> = {}
   let orbsBalance: number | null = null
   const rawGames: Array<{ id: string; seconds: number; lastPlayed: string }> = []
+  const profile: Profile = { friends: 0, blocked: 0, connections: [], apps: [], avatars: [], adminServers: [] }
   try {
     const userFiles = contents.file(/(^|\/)account\/user\.json$/i) as JSZip.JSZipObject[]
     if (userFiles.length > 0) {
@@ -381,8 +408,18 @@ async function ingestArchive(
           if (app?.id && typeof app.name === 'string') gameNames[String(app.id)] = app.name
         }
       }
+      // Connected accounts (Steam, Spotify...): only the service names
+      if (Array.isArray(user?.connections)) {
+        profile.connections = [...new Set<string>(user.connections
+          .filter((connection: any) => connection && connection.revoked !== true)
+          .map((connection: any) => String(connection.type ?? ''))
+          .filter(Boolean))]
+      }
       if (Array.isArray(user?.relationships)) {
         for (const rel of user.relationships) {
+          const kind = String(rel?.type ?? '').toUpperCase()
+          if (kind === 'FRIEND' || kind === '1') profile.friends++
+          else if (kind === 'BLOCKED' || kind === '2') profile.blocked++
           const id = rel?.id ?? rel?.user?.id
           const name = rel?.nickname || rel?.user?.global_name || rel?.user?.username || rel?.display_name
           if (id && typeof name === 'string' && name.trim()) {
@@ -652,12 +689,35 @@ async function ingestArchive(
 
   // Activity logs: voice time, reactions, edits, commands... (optional, can be huge)
   // Game names only exist in these logs, so "games" alone still needs one pass over them
+  const extras: ActivityExtras = { guildPerms: new Map() }
   try {
     if (sources.activity || sources.games) {
-      activityEvents += await ingestActivity(conn, contents, gameNames, sources.activity)
+      activityEvents += await ingestActivity(conn, contents, gameNames, sources.activity, extras)
     }
   } catch (err) {
     console.warn('Failed to read the Activity logs; continuing with messages only', err)
+  }
+
+  // Servers where your latest known permissions include Administrator
+  for (const [guildId, [, perms]] of extras.guildPerms) {
+    try {
+      if (/^\d+$/.test(perms) && (BigInt(perms) & ADMINISTRATOR) === ADMINISTRATOR && guildNames[guildId]) {
+        profile.adminServers.push(guildNames[guildId])
+      }
+    } catch { }
+  }
+  profile.adminServers.sort((a, b) => a.localeCompare(b))
+
+  // Your own applications and bots, and your avatar history
+  try {
+    profile.apps = await readOwnApps(contents)
+  } catch (err) {
+    console.warn('Failed to read Account/applications', err)
+  }
+  try {
+    profile.avatars = await readAvatars(contents)
+  } catch (err) {
+    console.warn('Failed to read Account/recent_avatars', err)
   }
 
   const games: GameStat[] = (sources.games ? rawGames : [])
@@ -667,7 +727,56 @@ async function ingestArchive(
   // Let the ZIP buffer be collected
   zipCache = null
 
-  return { yearCounts, userNames, channelLabels, guildNames, games, activityEvents, orbsBalance }
+  return { yearCounts, userNames, channelLabels, guildNames, games, activityEvents, orbsBalance, profile }
+}
+
+// Discord ids are snowflakes: the top bits are milliseconds since 2015-01-01
+function snowflakeDate(id: string): string | null {
+  try {
+    if (!/^\d{15,20}$/.test(id)) return null
+    const ms = Number(BigInt(id) >> BigInt(22)) + 1420070400000
+    const date = new Date(ms)
+    return Number.isFinite(date.getTime()) && date.getFullYear() >= 2015 ? date.toISOString().slice(0, 10) : null
+  } catch {
+    return null
+  }
+}
+
+async function readOwnApps(contents: JSZip): Promise<OwnApp[]> {
+  const files = contents.file(/(^|\/)account\/applications\/[^/]+\/application\.json$/i) as JSZip.JSZipObject[]
+  const apps: OwnApp[] = []
+  for (const file of files) {
+    try {
+      const app = JSON.parse(await file.async('string'))
+      if (!app || typeof app.name !== 'string') continue
+      const servers = Number(app.approximate_guild_count ?? app.bot_approximate_guild_count)
+      const users = Number(app.approximate_user_install_count)
+      apps.push({
+        name: app.name.trim(),
+        servers: Number.isFinite(servers) ? servers : 0,
+        users: Number.isFinite(users) ? users : 0,
+        isBot: !!app.bot,
+        verified: app.is_verified === true,
+        created: snowflakeDate(String(app.id ?? '')),
+      })
+    } catch { }
+  }
+  return apps.sort((a, b) => b.servers - a.servers || b.users - a.users || a.name.localeCompare(b.name))
+}
+
+async function readAvatars(contents: JSZip): Promise<Avatar[]> {
+  const files = (contents.file(/(^|\/)account\/recent_avatars\/[^/]+\.(png|gif|jpe?g|webp)$/i) as JSZip.JSZipObject[])
+  const avatars: Avatar[] = []
+  for (const file of files) {
+    const fileName = file.name.split('/').pop() || ''
+    const [id, ext] = fileName.split('.')
+    const type = ext.toLowerCase() === 'jpg' ? 'image/jpeg' : `image/${ext.toLowerCase()}`
+    const bytes = await file.async('arraybuffer')
+    if (bytes.byteLength > 12 * 1024 * 1024) continue
+    avatars.push({ date: snowflakeDate(id), animated: type === 'image/gif', image: new Blob([bytes], { type }) })
+  }
+  // Oldest first, undated last
+  return avatars.sort((a, b) => (a.date ?? '9999').localeCompare(b.date ?? '9999')).slice(-12)
 }
 
 // ---------------------------------------------------------------------------
@@ -769,7 +878,37 @@ const ACTIVITY_TYPES = new Set([
   'app_opened',
   'guild_joined',
   'leave_guild',
+  // Spy mode: what you opened, whether or not you wrote there
+  'channel_opened',
+  'guild_viewed',
+  // Time in Discord
+  'session_start',
+  'session_end',
+  // Social life, servers, curiosities
+  'update_relationship',
+  'accepted_instant_invite',
+  'create_guild',
+  'captcha_served',
+  'voice_message_playback_ended',
+  'voice_channel_effect_sent',
 ])
+
+// Discord's ADMINISTRATOR permission bit
+const ADMINISTRATOR = BigInt(8)
+
+// Where a session ran, from the client name the event carries
+function platformOf(browser: string, os: string): string {
+  if (/android|ios/i.test(browser) || /^(android|ios)$/i.test(os)) return 'Phone'
+  if (/discord client/i.test(browser)) return 'Desktop app'
+  if (/embedded/i.test(browser)) return 'Console'
+  return 'Browser'
+}
+
+// Extra facts collected while reading the activity logs
+interface ActivityExtras {
+  // guild id -> [time of the latest guild_viewed, your permission bits there]
+  guildPerms: Map<string, [number, string]>
+}
 
 type ActivityRow = { type: string; ts: string; a: string; b: string; c: string; n: number }
 
@@ -843,7 +982,8 @@ async function ingestActivity(
   conn: duckdb.AsyncDuckDBConnection,
   contents: JSZip,
   gameNames: Record<string, string>,
-  keepEvents: boolean
+  keepEvents: boolean,
+  extras: ActivityExtras
 ): Promise<number> {
   const files = (contents.file(/(^|\/)activity\/[^/]+\/events-[^/]*\.json$/i) as JSZip.JSZipObject[])
     .filter((entry) => !entry.dir)
@@ -856,6 +996,9 @@ async function ingestActivity(
   const rows: ActivityRow[] = []
   let inserted = 0
   const MAX_VOICE_SECONDS = 7 * 24 * 3600
+  // Client sessions are paired by their id once both ends have been seen
+  const sessionStarts = new Map<string, { date: Date; platform: string }>()
+  const sessionEnds = new Map<string, Date>()
 
   const handleLine = (line: string) => {
     // Any event may reveal what a game id is called
@@ -943,6 +1086,58 @@ async function ingestActivity(
       case 'leave_guild':
         rows.push({ type: 'server_left', ts, a: cleanValue(event.guild_id), b: '', c: '', n: 0 })
         return
+      case 'channel_opened':
+        rows.push({
+          type: 'open',
+          ts,
+          a: cleanValue(event.channel_id),
+          b: cleanValue(event.guild_id),
+          c: cleanValue(event.channel_type),
+          n: 0,
+        })
+        return
+      case 'guild_viewed': {
+        const guildId = cleanValue(event.guild_id)
+        const perms = cleanValue(event.guild_member_perms)
+        if (guildId && perms) {
+          const previous = extras.guildPerms.get(guildId)
+          if (!previous || date.getTime() >= previous[0]) extras.guildPerms.set(guildId, [date.getTime(), perms])
+        }
+        rows.push({ type: 'server_view', ts, a: guildId, b: '', c: '', n: 0 })
+        return
+      }
+      case 'session_start':
+      case 'session_end': {
+        const sessionId = cleanValue(event.session)
+        if (!sessionId) return
+        if (type === 'session_start') {
+          sessionStarts.set(sessionId, { date, platform: platformOf(cleanValue(event.browser), cleanValue(event.os)) })
+        } else {
+          sessionEnds.set(sessionId, date)
+        }
+        return
+      }
+      case 'update_relationship':
+        // 0 removed, 1 friends, 2 blocked, 3 request received, 4 request sent
+        rows.push({ type: 'relationship', ts, a: cleanValue(event.type), b: '', c: '', n: 0 })
+        return
+      case 'accepted_instant_invite':
+        rows.push({ type: 'invite', ts, a: '', b: '', c: '', n: 0 })
+        return
+      case 'create_guild':
+        rows.push({ type: 'server_created', ts, a: cleanValue(event.guild_id), b: '', c: '', n: 0 })
+        return
+      case 'captcha_served':
+        rows.push({ type: 'captcha', ts, a: '', b: '', c: '', n: 0 })
+        return
+      case 'voice_message_playback_ended': {
+        const listened = Number(cleanValue(event.duration_listening_secs))
+        rows.push({ type: 'voice_message', ts, a: '', b: '', c: '', n: Number.isFinite(listened) ? listened : 0 })
+        return
+      }
+      case 'voice_channel_effect_sent':
+        rows.push({ type: 'voice_effect', ts, a: '', b: '', c: '', n: 0 })
+        return
     }
   }
 
@@ -990,6 +1185,17 @@ async function ingestActivity(
   for (const session of voice.values()) {
     voiceRows.push({ type: 'voice', ts: session.ts, a: session.channel, b: session.guild, c: '', n: session.seconds })
   }
+  // Client sessions: start to end of the same session id. A desktop app left in
+  // the tray counts as open, so cap one session at a day.
+  const MAX_SESSION_SECONDS = 24 * 3600
+  for (const [sessionId, start] of sessionStarts) {
+    const end = sessionEnds.get(sessionId)
+    if (!end) continue
+    const seconds = Math.min(MAX_SESSION_SECONDS, (end.getTime() - start.date.getTime()) / 1000)
+    if (!(seconds > 0)) continue
+    voiceRows.push({ type: 'client_session', ts: toLocalSqlTimestamp(start.date), a: start.platform, b: '', c: '', n: seconds })
+  }
+
   for (let offset = 0; offset < voiceRows.length; offset += 4000) {
     await insertActivityBatch(conn, voiceRows.slice(offset, offset + 4000))
   }
@@ -1014,7 +1220,7 @@ async function processAndAnalyze(
   } else {
     postProgress('Reusing loaded archive...', 85)
   }
-  const { yearCounts, userNames, channelLabels, guildNames, games, activityEvents, orbsBalance } = loaded
+  const { yearCounts, userNames, channelLabels, guildNames, games, activityEvents, orbsBalance, profile } = loaded
 
   postProgress('Identifying active year...', 88)
 
@@ -1091,6 +1297,7 @@ async function processAndAnalyze(
   stats.hasActivityData = activityEvents > 0
   stats.sources = sources
   stats.orbsBalance = orbsBalance
+  stats.profile = profile
   // Play time in the export is an all-time total per game, not per year
   const namedGames = games.filter((game) => game.name)
   stats.topGames = namedGames.slice(0, 10).map((game) => ({ name: game.name, seconds: game.seconds, lastPlayed: game.lastPlayed }))
@@ -1224,6 +1431,58 @@ async function runActivityQueries(
     GROUP BY A ORDER BY count DESC LIMIT 6
   `)).map((row) => ({ name: String(row.name), count: Number(row.count) }))
 
+  // ---- Spy mode: channels opened against messages written there ----
+  const sentByChannel = new Map<string, number>()
+  for (const row of await rowsOf(`SELECT ChannelId as id, COUNT(*) as c FROM messages GROUP BY ChannelId`)) {
+    sentByChannel.set(String(row.id), Number(row.c))
+  }
+  const openRows = await rowsOf(`
+    SELECT A as channel, ANY_VALUE(B) as guild, ANY_VALUE(C) as kind, COUNT(*) as opens
+    FROM activity WHERE Type = 'open' AND A <> ''
+    GROUP BY A ORDER BY opens DESC
+  `)
+  let opensTotal = 0
+  let opensSilent = 0
+  let channelsOpened = 0
+  let channelsSilent = 0
+  const lurked: Array<{ name: string; count: number; value: string }> = []
+  for (const row of openRows) {
+    const opens = Number(row.opens) || 0
+    const sent = sentByChannel.get(String(row.channel)) ?? 0
+    opensTotal += opens
+    channelsOpened++
+    if (sent > 0) continue
+    opensSilent += opens
+    channelsSilent++
+    if (lurked.length >= 10) continue
+    const guildName = names.guildNames[String(row.guild)] || ''
+    const label = names.channelLabels[String(row.channel)] || (guildName ? `${guildName} • unnamed channel` : '')
+    if (label) lurked.push({ name: label, count: opens, value: `${opens.toLocaleString('en-US')} opens` })
+  }
+
+  const visitedServers = (await rowsOf(`
+    SELECT A as guild, COUNT(*) as visits
+    FROM activity WHERE Type = 'server_view' AND A <> ''
+    GROUP BY A ORDER BY visits DESC LIMIT 40
+  `))
+    .map((row) => ({ name: names.guildNames[String(row.guild)] || '', count: Number(row.visits) }))
+    .filter((row) => row.name)
+    .slice(0, 10)
+
+  // ---- Time in Discord: paired client sessions ----
+  const sessionByPlatform = (await rowsOf(`
+    SELECT A as platform, SUM(N) as seconds, COUNT(*) as sessions
+    FROM activity WHERE Type = 'client_session'
+    GROUP BY A ORDER BY seconds DESC
+  `)).map((row) => ({ name: String(row.platform), seconds: Math.round(Number(row.seconds) || 0), sessions: Number(row.sessions) || 0 }))
+  const sessionDays = await rowsOf(`SELECT COUNT(DISTINCT DATE(Timestamp)) as days FROM activity WHERE Type = 'client_session'`)
+
+  // ---- Social life ----
+  const relationshipCounts: Record<string, number> = {}
+  for (const row of await rowsOf(`SELECT A as kind, COUNT(*) as c FROM activity WHERE Type = 'relationship' GROUP BY A`)) {
+    relationshipCounts[String(row.kind)] = Number(row.c) || 0
+  }
+
   // Money: one total per currency (orb-priced purchases are counted under Orbs)
   const spending = (await rowsOf(`
     SELECT A as currency, SUM(N) as amount, COUNT(*) as count
@@ -1280,6 +1539,33 @@ async function runActivityQueries(
     appOpensByPlatform,
     serversJoined: total('server_joined').count,
     serversLeft: total('server_left').count,
+    // Spy mode
+    channelOpens: opensTotal,
+    channelsOpened,
+    channelsOnlyRead: channelsSilent,
+    lurkerIndex: opensTotal > 0 ? Math.round((opensSilent / opensTotal) * 100) : 0,
+    lurkedChannels: lurked,
+    serverVisits: total('server_view').count,
+    topVisitedServers: visitedServers,
+    // Time in Discord
+    clientSeconds: Math.round(total('client_session').sum),
+    clientSessions: total('client_session').count,
+    longestClientSeconds: Math.round(total('client_session').max),
+    clientDays: Number(sessionDays[0]?.days ?? 0),
+    clientByPlatform: sessionByPlatform,
+    // Social life
+    friendsAdded: relationshipCounts['1'] ?? 0,
+    friendRequestsSent: relationshipCounts['4'] ?? 0,
+    friendRequestsReceived: relationshipCounts['3'] ?? 0,
+    friendsRemoved: relationshipCounts['0'] ?? 0,
+    usersBlocked: relationshipCounts['2'] ?? 0,
+    invitesAccepted: total('invite').count,
+    serversCreated: total('server_created').count,
+    // Curiosities
+    captchas: total('captcha').count,
+    voiceMessagesPlayed: total('voice_message').count,
+    voiceMessageSeconds: Math.round(total('voice_message').sum),
+    voiceEffects: total('voice_effect').count,
   }
 }
 

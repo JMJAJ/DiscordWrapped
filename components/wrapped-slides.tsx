@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame, Mic, Headphones, MonitorPlay, Pencil, Terminal, Smartphone, DoorOpen, Gamepad2, CreditCard, ShoppingBag, Coins, Trophy, LayoutGrid, Share2 } from "lucide-react"
+import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame, Mic, Headphones, MonitorPlay, Pencil, Terminal, Smartphone, DoorOpen, Gamepad2, CreditCard, ShoppingBag, Coins, Trophy, LayoutGrid, Share2, Eye, UserPlus, Users, Crown, Bot } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { ShareCardDialog } from "@/components/share-card-dialog"
+import { computeArchetype } from "@/lib/archetype"
 import { KawarpBackground, KAWARP_PALETTES } from "@/components/kawarp-background"
 
 interface DiscordData {
@@ -105,6 +106,91 @@ interface DiscordData {
   questsCompleted?: number
   questsClaimed?: number
   questOrbs?: number
+  // Spy mode
+  channelOpens?: number
+  channelsOpened?: number
+  channelsOnlyRead?: number
+  lurkerIndex?: number
+  lurkedChannels?: Array<{ name: string; count: number; value?: string }>
+  serverVisits?: number
+  topVisitedServers?: Array<{ name: string; count: number }>
+  // Time in Discord
+  clientSeconds?: number
+  clientSessions?: number
+  longestClientSeconds?: number
+  clientDays?: number
+  clientByPlatform?: Array<{ name: string; seconds: number; sessions: number }>
+  // Social life, servers, curiosities
+  friendsAdded?: number
+  friendRequestsSent?: number
+  friendRequestsReceived?: number
+  friendsRemoved?: number
+  usersBlocked?: number
+  invitesAccepted?: number
+  serversCreated?: number
+  captchas?: number
+  voiceMessagesPlayed?: number
+  voiceMessageSeconds?: number
+  voiceEffects?: number
+  // Right now, whatever the year
+  profile?: {
+    friends: number
+    blocked: number
+    connections: string[]
+    apps: Array<{ name: string; servers: number; users: number; isBot: boolean; verified: boolean; created: string | null }>
+    avatars: Array<{ date: string | null; animated: boolean; image: Blob }>
+    adminServers: string[]
+  }
+}
+
+const CONNECTION_NAMES: Record<string, string> = {
+  battlenet: "Battle.net", bluesky: "Bluesky", crunchyroll: "Crunchyroll", domain: "a domain", ebay: "eBay",
+  epicgames: "Epic Games", facebook: "Facebook", github: "GitHub", instagram: "Instagram", leagueoflegends: "League of Legends",
+  paypal: "PayPal", playstation: "PlayStation", reddit: "Reddit", riotgames: "Riot Games", roblox: "Roblox",
+  spotify: "Spotify", steam: "Steam", tiktok: "TikTok", twitch: "Twitch", twitter: "X", xbox: "Xbox", youtube: "YouTube",
+  contacts: "Contacts",
+}
+
+// Avatar images arrive as Blobs from the worker; give each one a URL while shown
+function AvatarStrip({ avatars }: { avatars: Array<{ date: string | null; animated: boolean; image: Blob }> }) {
+  const [urls, setUrls] = useState<string[]>([])
+  useEffect(() => {
+    const created = avatars.map((avatar) => URL.createObjectURL(avatar.image))
+    setUrls(created)
+    return () => created.forEach((url) => URL.revokeObjectURL(url))
+  }, [avatars])
+
+  return (
+    <div className="flex flex-wrap justify-center gap-5">
+      {avatars.map((avatar, index) => (
+        <motion.figure
+          key={index}
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 + index * 0.1 }}
+          className="flex flex-col items-center gap-2"
+        >
+          {urls[index] ? (
+            <img
+              src={urls[index]}
+              alt={avatar.date ? `Avatar from ${avatar.date}` : "One of your avatars"}
+              width={112}
+              height={112}
+              className="h-24 w-24 rounded-full border-2 border-red-900/60 object-cover md:h-28 md:w-28"
+            />
+          ) : (
+            <div className="h-24 w-24 rounded-full bg-zinc-800 md:h-28 md:w-28" />
+          )}
+          <figcaption className="font-mono text-xs text-gray-400">
+            {avatar.date
+              ? new Date(avatar.date).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })
+              : "Undated"}
+            {avatar.animated ? " · GIF" : ""}
+          </figcaption>
+        </motion.figure>
+      ))}
+    </div>
+  )
 }
 
 // 307.87, "eur" -> "€307.87"
@@ -249,7 +335,7 @@ function DiscordEmoji({ name, id, isAnimated, size = 24 }: { name: string; id: s
 }
 
 // Slides are grouped into chapters; the navigation shows one segment per chapter
-const CHAPTER_ORDER = ["Intro", "Messages", "Rhythm", "Places", "Style", "Emojis", "Voice", "Extras", "Recap"]
+const CHAPTER_ORDER = ["Intro", "Messages", "Rhythm", "Habits", "Places", "Social", "Style", "Emojis", "Voice", "Extras", "Recap"]
 
 const CHAPTER_OF: Record<string, string> = {
   "intro": "Intro",
@@ -269,6 +355,11 @@ const CHAPTER_OF: Record<string, string> = {
   "voice-time": "Voice", "top-voice": "Voice", "streams-watched": "Voice",
   "top-commands": "Extras", "app-opens": "Extras", "money-spent": "Extras", "top-purchases": "Extras",
   "orbs": "Extras", "quests": "Extras", "top-games": "Extras",
+  "time-in-discord": "Habits", "platforms": "Habits", "lurker": "Habits", "lurked-channels": "Habits",
+  "visited-servers": "Places",
+  "friends-added": "Social", "friends-now": "Social", "your-servers": "Social", "your-apps": "Social",
+  "curiosities": "Extras", "avatars": "Extras",
+  "archetype": "Recap",
   "summary": "Recap", "outro": "Recap",
 }
 
@@ -1259,6 +1350,206 @@ function createSlides(data: DiscordData) {
     })
   }
 
+  // ---- Habits: time in Discord and spy mode ----
+  const clientSeconds = data.clientSeconds ?? 0
+  if (clientSeconds >= 3600) {
+    const hours = Math.round(clientSeconds / 3600)
+    const hourStat = formatStat(hours)
+    const days = data.clientDays ?? 0
+    const platforms = data.clientByPlatform ?? []
+    const main = platforms[0]
+    slides.push({
+      id: "time-in-discord",
+      type: "stat",
+      icon: Clock,
+      stat: `${hourStat.value}h`,
+      statSize: hourStat.size,
+      label: "With Discord Open",
+      description: days > 0
+        ? `About ${formatDuration(clientSeconds / days)} a day on ${days.toLocaleString()} days · longest stretch ${formatDuration(data.longestClientSeconds ?? 0)}`
+        : `${(data.clientSessions ?? 0).toLocaleString()} sessions`,
+      funFact: main ? `${Math.round((main.seconds / clientSeconds) * 100)}% of it on the ${main.name.toLowerCase()}` : null,
+      subtext: "Counts the app being open, even sitting in the background",
+    })
+
+    if (platforms.length > 1) {
+      slides.push({
+        id: "platforms",
+        type: "list",
+        title: "Where You Used Discord",
+        icon: Smartphone,
+        data: platforms.slice(0, 5).map((platform) => ({
+          name: platform.name,
+          count: platform.seconds,
+          value: formatDuration(platform.seconds),
+        })),
+        description: `${(data.clientSessions ?? 0).toLocaleString()} sessions across ${platforms.length} kinds of device`,
+      })
+    }
+  }
+
+  const channelOpens = data.channelOpens ?? 0
+  if (channelOpens > 100) {
+    const lurker = data.lurkerIndex ?? 0
+    slides.push({
+      id: "lurker",
+      type: "progress",
+      icon: Eye,
+      stat: `${lurker}%`,
+      statSize: "text-7xl md:text-9xl",
+      label: "Lurker Index",
+      progress: lurker,
+      description: `Of all the times you opened a channel, ${lurker}% were channels you never wrote in`,
+      subtext: `${channelOpens.toLocaleString()} channel opens · ${(channelOpens / Math.max(1, data.totalMessages)).toFixed(1)} per message you sent · ${(data.channelsOnlyRead ?? 0).toLocaleString()} channels only read`,
+      funFact: lurker >= 50 ? "Reading is a form of participation. Probably." : null,
+    })
+
+    const lurked = data.lurkedChannels ?? []
+    if (lurked.length > 1) {
+      slides.push({
+        id: "lurked-channels",
+        type: "list",
+        title: "Where You Lurk",
+        icon: Eye,
+        data: lurked.slice(0, 5),
+        description: "The channels you open most without ever writing in them",
+      })
+    }
+  }
+
+  const visited = data.topVisitedServers ?? []
+  if (visited.length > 1) {
+    slides.push({
+      id: "visited-servers",
+      type: "list",
+      title: "Servers You Check Most",
+      icon: Target,
+      data: visited.slice(0, 5).map((server) => ({ ...server, value: `${compactNumber(server.count)} visits` })),
+      description: `${compactNumber(data.serverVisits ?? 0)} server visits, whether you wrote or not`,
+    })
+  }
+
+  // ---- Social life ----
+  const friendsAdded = data.friendsAdded ?? 0
+  if (friendsAdded > 0 || (data.invitesAccepted ?? 0) > 0) {
+    const sent = data.friendRequestsSent ?? 0
+    const received = data.friendRequestsReceived ?? 0
+    slides.push({
+      id: "friends-added",
+      type: "stat",
+      icon: UserPlus,
+      stat: `+${friendsAdded.toLocaleString()}`,
+      statSize: "text-7xl md:text-9xl",
+      label: friendsAdded === 1 ? "New Friend" : "New Friends",
+      description: `${sent.toLocaleString()} requests sent · ${received.toLocaleString()} received · ${(data.invitesAccepted ?? 0).toLocaleString()} server invites accepted`,
+      funFact: (data.usersBlocked ?? 0) > 0
+        ? `And ${data.usersBlocked} ${data.usersBlocked === 1 ? "person" : "people"} blocked. Boundaries matter.`
+        : null,
+    })
+  }
+
+  const profile = data.profile
+  if (profile && (profile.friends > 0 || profile.connections.length > 0)) {
+    const linked = profile.connections.map((type) => CONNECTION_NAMES[type] ?? type)
+    slides.push({
+      id: "friends-now",
+      type: "stat",
+      icon: Users,
+      stat: profile.friends.toLocaleString(),
+      statSize: "text-7xl md:text-9xl",
+      label: "Friends Right Now",
+      description: `${profile.blocked.toLocaleString()} blocked · ${linked.length} linked ${linked.length === 1 ? "account" : "accounts"}`,
+      funFact: linked.length > 0 ? `Linked: ${linked.slice(0, 6).join(", ")}${linked.length > 6 ? "…" : ""}` : null,
+    })
+  }
+
+  // ---- Your servers and bots ----
+  const adminServers = profile?.adminServers ?? []
+  const serversCreated = data.serversCreated ?? 0
+  if (adminServers.length > 0) {
+    slides.push({
+      id: "your-servers",
+      type: "list",
+      title: "Servers You Run",
+      icon: Crown,
+      data: adminServers.slice(0, 5).map((name) => ({ name, count: 0, value: "Admin" })),
+      description: `Admin in ${adminServers.length} ${adminServers.length === 1 ? "server" : "servers"}${serversCreated > 0
+        ? ` · ${serversCreated} created ${isAllTime ? "in total" : `in ${yearLabel}`}`
+        : ""}`,
+    })
+  } else if (serversCreated > 0) {
+    slides.push({
+      id: "your-servers",
+      type: "stat",
+      icon: Crown,
+      stat: serversCreated.toLocaleString(),
+      statSize: "text-7xl md:text-9xl",
+      label: serversCreated === 1 ? "Server Created" : "Servers Created",
+      description: "Building your own corners of the internet",
+    })
+  }
+
+  const apps = profile?.apps ?? []
+  if (apps.length > 0) {
+    const bots = apps.filter((app) => app.isBot).length
+    slides.push({
+      id: "your-apps",
+      type: "list",
+      title: "Your Apps and Bots",
+      icon: Bot,
+      data: apps.slice(0, 5).map((app) => ({
+        name: app.verified ? `${app.name} ✓` : app.name,
+        count: app.servers,
+        value: app.servers > 0 ? `${compactNumber(app.servers)} servers` : app.isBot ? "Bot" : "App",
+      })),
+      description: `${apps.length} ${apps.length === 1 ? "app" : "apps"} on your developer account, ${bots} with a bot`,
+    })
+  }
+
+  // ---- Curiosities ----
+  const facts: Array<{ value: string; label: string }> = []
+  if ((data.captchas ?? 0) > 0) facts.push({ value: compactNumber(data.captchas ?? 0), label: "captchas served to you" })
+  if ((data.voiceMessagesPlayed ?? 0) > 0) {
+    facts.push({ value: compactNumber(data.voiceMessagesPlayed ?? 0), label: `voice messages played (${formatDuration(data.voiceMessageSeconds ?? 0)})` })
+  }
+  if ((data.voiceEffects ?? 0) > 0) facts.push({ value: compactNumber(data.voiceEffects ?? 0), label: "voice channel effects sent" })
+  if ((data.friendsRemoved ?? 0) > 0) facts.push({ value: compactNumber(data.friendsRemoved ?? 0), label: "friends removed or requests cancelled" })
+  if ((data.deletedCount ?? 0) > 0) facts.push({ value: compactNumber(data.deletedCount ?? 0), label: "messages deleted" })
+  if ((profile?.avatars.length ?? 0) > 0) facts.push({ value: String(profile?.avatars.length), label: "avatars in your history" })
+  if (facts.length >= 2) {
+    slides.push({
+      id: "curiosities",
+      type: "facts",
+      icon: Sparkles,
+      title: "Odds and Ends",
+      facts: facts.slice(0, 6),
+      description: "Small numbers Discord kept track of",
+    })
+  }
+
+  if ((profile?.avatars.length ?? 0) > 1) {
+    slides.push({
+      id: "avatars",
+      type: "avatars",
+      icon: Smile,
+      title: "Your Many Faces",
+      avatars: profile?.avatars ?? [],
+      description: "Your recent avatars, oldest first. Discord keeps the last few.",
+    })
+  }
+
+  // ---- Archetype ----
+  const archetype = computeArchetype(data)
+  if (archetype) {
+    slides.push({
+      id: "archetype",
+      type: "archetype",
+      title: archetype.title,
+      subtitle: archetype.tagline,
+      reasons: archetype.reasons,
+    })
+  }
+
   // Summary card - Spotify style
   const totalSentimentCalc = data.sentimentPositive + data.sentimentNegative
   const positivePercentCalc = totalSentimentCalc > 0 ? Math.round((data.sentimentPositive / totalSentimentCalc) * 100) : 50
@@ -1520,6 +1811,89 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
               </Card>
             )}
 
+            {/* Facts grid */}
+            {slide.type === "facts" && (
+              <Card className="bg-zinc-900/80 border-red-900/30 p-6 md:p-10 backdrop-blur-md">
+                <div className="space-y-6">
+                  <div className="flex items-center gap-4">
+                    {slide.icon && <slide.icon className="w-10 h-10 text-red-500" />}
+                    <h2 className="text-3xl md:text-4xl font-bold text-white">{slide.title}</h2>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
+                    {slide.facts.map((fact: { value: string; label: string }, index: number) => (
+                      <motion.div
+                        key={fact.label}
+                        initial={{ scale: 0.8, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ delay: 0.1 + index * 0.07 }}
+                        className="bg-black/40 rounded-xl p-4 border border-red-900/20 text-center"
+                      >
+                        <p className="text-3xl md:text-4xl font-black text-red-400">{fact.value}</p>
+                        <p className="text-xs md:text-sm text-gray-400">{fact.label}</p>
+                      </motion.div>
+                    ))}
+                  </div>
+                  <p className="text-base text-gray-400 text-center">{slide.description}</p>
+                </div>
+              </Card>
+            )}
+
+            {/* Avatar history */}
+            {slide.type === "avatars" && (
+              <Card className="bg-zinc-900/80 border-red-900/30 p-6 md:p-10 backdrop-blur-md">
+                <div className="space-y-8">
+                  <div className="flex items-center gap-4">
+                    {slide.icon && <slide.icon className="w-10 h-10 text-red-500" />}
+                    <h2 className="text-3xl md:text-4xl font-bold text-white">{slide.title}</h2>
+                  </div>
+                  <AvatarStrip avatars={slide.avatars} />
+                  <p className="text-base text-gray-400 text-center">{slide.description}</p>
+                </div>
+              </Card>
+            )}
+
+            {/* Archetype */}
+            {slide.type === "archetype" && (
+              <div className="text-center space-y-8 px-4">
+                <motion.p
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="font-mono text-sm uppercase tracking-[0.3em] text-red-400"
+                >
+                  Your Discord archetype
+                </motion.p>
+                <motion.h1
+                  initial={{ scale: 0.7, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ delay: 0.15, type: "spring" }}
+                  className="text-5xl md:text-7xl font-black bg-gradient-to-r from-red-400 via-red-500 to-orange-500 bg-clip-text text-transparent leading-tight"
+                >
+                  {slide.title}
+                </motion.h1>
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.4 }}
+                  className="text-xl md:text-2xl text-gray-200"
+                >
+                  {slide.subtitle}
+                </motion.p>
+                <ul className="mx-auto flex max-w-2xl flex-col gap-3">
+                  {slide.reasons.map((reason: string, index: number) => (
+                    <motion.li
+                      key={reason}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.6 + index * 0.15 }}
+                      className="rounded-xl border border-red-900/40 bg-black/50 px-5 py-3 text-left text-base text-gray-200"
+                    >
+                      {reason}
+                    </motion.li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Chart slides (bar charts and the calendar heatmap) */}
             {(slide.type === "chart" || slide.type === "heatmap") && (
               <Card className="bg-zinc-900/80 border-red-900/30 p-6 md:p-10 backdrop-blur-md">
@@ -1620,6 +1994,10 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                     >
                       {slide.funFact}
                     </motion.p>
+                  )}
+
+                  {slide.type === "stat" && slide.subtext && (
+                    <p className="text-sm text-gray-500">{slide.subtext}</p>
                   )}
                 </div>
               </Card>
