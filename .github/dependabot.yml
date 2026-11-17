@@ -1,0 +1,24 @@
+# Dependabot: keeps npm dependencies up to date with weekly pull requests.
+# Security fixes come on their own as soon as an advisory is published, once
+# "Dependabot security updates" is turned on in Settings > Code security.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+    groups:
+      # One PR per week for everything that should not break anything
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    # Major versions still arrive, one PR each, so they can be reviewed separately
