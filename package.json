@@ -73,7 +73,7 @@
   "devDependencies": {
     "@duckdb/node-api": "^1.4.5-r.1",
     "@tailwindcss/postcss": "^4.1.9",
-    "@types/node": "^22",
+    "@types/node": "^26",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "postcss": "^8.5.33",
