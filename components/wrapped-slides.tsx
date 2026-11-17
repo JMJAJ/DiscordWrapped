@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useMemo, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame, Mic, Headphones, MonitorPlay, Pencil, Terminal, Smartphone, DoorOpen, Gamepad2, CreditCard, ShoppingBag, Coins, Trophy, LayoutGrid } from "lucide-react"
+import { ChevronRight, ChevronLeft, MessageSquare, Calendar, Clock, Zap, Heart, Smile, Target, Moon, Sun, Coffee, Link, AtSign, Megaphone, Sparkles, Ghost, MessageCircle, BarChart3, Award, Flame, Mic, Headphones, MonitorPlay, Pencil, Terminal, Smartphone, DoorOpen, Gamepad2, CreditCard, ShoppingBag, Coins, Trophy, LayoutGrid, Share2 } from "lucide-react"
 import { Card } from "@/components/ui/card"
+import { ShareCardDialog } from "@/components/share-card-dialog"
 import { KawarpBackground, KAWARP_PALETTES } from "@/components/kawarp-background"
 
 interface DiscordData {
@@ -1318,6 +1319,7 @@ function createSlides(data: DiscordData) {
 export function WrappedSlides({ data }: { data: DiscordData }) {
   const [currentSlide, setCurrentSlide] = useState(0)
   const [direction, setDirection] = useState(0)
+  const [shareOpen, setShareOpen] = useState(false)
   const slides = useMemo(() => createSlides(data), [data])
   const slideCountRef = useRef(slides.length)
   const currentSlideRef = useRef(currentSlide)
@@ -1333,6 +1335,8 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
   // Keyboard navigation with stable listener to avoid re-subscribing on each slide change
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // A dialog (the share card) owns the keyboard while it is open
+      if (document.querySelector('[role="dialog"]')) return
       const total = slideCountRef.current
       const active = currentSlideRef.current
 
@@ -1765,12 +1769,25 @@ export function WrappedSlides({ data }: { data: DiscordData }) {
                       </motion.div>
                     )}
                   </div>
+
+                  <div className="flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setShareOpen(true)}
+                      className="flex min-h-12 items-center gap-2 rounded-full bg-red-600 px-6 text-[15px] font-bold text-white transition hover:bg-red-500"
+                    >
+                      <Share2 className="h-[18px] w-[18px]" aria-hidden="true" />
+                      Share as image
+                    </button>
+                  </div>
                 </div>
               </Card>
             )}
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {shareOpen && <ShareCardDialog data={data} onClose={() => setShareOpen(false)} />}
 
       {/* Navigation */}
       <ChapterNav
